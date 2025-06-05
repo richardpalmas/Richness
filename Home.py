@@ -283,17 +283,33 @@ if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos
         if itemids_data:
             status_container.info(f"🔄 Forçando sincronização de {len(itemids_data)} itens bancários...")
             
-            # 2. Forçar atualização de todos os itens na API Pluggy
-            resultado = pluggy.forcar_atualizacao_todos_items(itemids_data)
+            # 2. Testar conectividade e forçar refresh dos dados
+            sucesso = 0
+            erro = 0
             
-            # 3. Mostrar resultados da sincronização
-            if resultado['sucesso'] > 0:
-                status_container.success(f"✅ {resultado['sucesso']} itens sincronizados com sucesso!")
-            if resultado['erro'] > 0:
-                status_container.warning(f"⚠️ {resultado['erro']} itens com erro/já em atualização")
+            # Primeiro, testar a autenticação
+            if pluggy.testar_autenticacao():
+                # Limpar cache para forçar dados frescos
+                pluggy.limpar_cache()
+                
+                # Testar cada item ID individualmente
+                for item in itemids_data:
+                    if pluggy.testar_item_id(item['item_id']):
+                        sucesso += 1
+                    else:
+                        erro += 1
+                
+                # 3. Mostrar resultados da sincronização
+                if sucesso > 0:
+                    status_container.success(f"✅ {sucesso} itens validados com sucesso!")
+                if erro > 0:
+                    status_container.warning(f"⚠️ {erro} itens com erro ou inválidos")
+            else:
+                status_container.error("❌ Falha na autenticação com a API Pluggy")
+                erro = len(itemids_data)
             
-            # 4. Aguardar um momento para a API processar
-            time.sleep(3)
+            # 4. Aguardar um momento para completar
+            time.sleep(2)
             status_container.info("🔄 Limpando cache e recarregando dados...")
         else:
             status_container.warning("⚠️ Nenhum item bancário encontrado para sincronizar")
@@ -382,8 +398,12 @@ def carregar_dados_home(usuario, force_refresh=False):
         if not itemids_data:
             return None, pd.DataFrame()
         
-        # Carregar dados essenciais com force_refresh
-        saldos_info = pluggy.obter_saldo_atual(itemids_data, force_refresh=force_refresh)
+        # Se force_refresh for True, limpar cache
+        if force_refresh:
+            pluggy.limpar_cache()
+        
+        # Carregar dados essenciais
+        saldos_info = pluggy.obter_saldo_atual(itemids_data)
         df = pluggy.buscar_extratos(itemids_data)
         
         # Pré-processamento mínimo

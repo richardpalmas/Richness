@@ -104,7 +104,14 @@ def buscar_dados_cartoes(item_ids_tuple, data_inicio_str, data_fim_str):
     def _buscar_cartoes():
         pluggy = get_pluggy_connector()
         item_data = [{'item_id': item_id, 'nome': item_id} for item_id in item_ids_tuple]
-        return pluggy.buscar_cartoes_periodo(item_data, data_inicio_str, data_fim_str)
+        
+        # Calcular número de dias entre as datas
+        from datetime import datetime
+        data_inicio = datetime.strptime(data_inicio_str, '%Y-%m-%d').date()
+        data_fim = datetime.strptime(data_fim_str, '%Y-%m-%d').date()
+        dias = (data_fim - data_inicio).days
+        
+        return pluggy.buscar_cartoes(item_data, dias)
     
     return ExceptionHandler.safe_execute(
         func=_buscar_cartoes,
