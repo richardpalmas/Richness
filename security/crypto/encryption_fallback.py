@@ -15,7 +15,7 @@ class DataEncryption:
     Para ambientes com problemas na biblioteca cryptography
     """
     
-    def __init__(self, key: str = None):
+    def __init__(self, key: Optional[str] = None):
         """Inicializa com chave de criptografia"""
         self.key = key or self._generate_key()
     
@@ -101,7 +101,7 @@ class DataEncryption:
             print(f"Decryption error: {e}")
             return encrypted_data  # Fallback: retornar dados originais
     
-    def encrypt_dict(self, data_dict: Dict[str, Any], fields_to_encrypt: list = None) -> Dict[str, Any]:
+    def encrypt_dict(self, data_dict: Dict[str, Any], fields_to_encrypt: Optional[list] = None) -> Dict[str, Any]:
         """
         Criptografa campos específicos de um dicionário
         """
@@ -116,7 +116,7 @@ class DataEncryption:
         
         return encrypted_dict
     
-    def decrypt_dict(self, encrypted_dict: Dict[str, Any], fields_to_decrypt: list = None) -> Dict[str, Any]:
+    def decrypt_dict(self, encrypted_dict: Dict[str, Any], fields_to_decrypt: Optional[list] = None) -> Dict[str, Any]:
         """
         Descriptografa campos específicos de um dicionário
         """
@@ -135,7 +135,7 @@ class DataEncryption:
         """Gera token seguro"""
         return secrets.token_urlsafe(length)
     
-    def hash_data(self, data: str, salt: str = None) -> str:
+    def hash_data(self, data: str, salt: Optional[str] = None) -> str:
         """Gera hash seguro dos dados"""
         if salt is None:
             salt = secrets.token_hex(16)

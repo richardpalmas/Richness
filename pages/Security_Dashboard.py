@@ -12,12 +12,11 @@ from pathlib import Path
 from security.audit.security_logger import get_security_logger
 # Import rate limiter with fallback
 try:
-    from security.auth.rate_limiter_fixed import get_rate_limiter
+    from security.auth.rate_limiter_fixed import get_rate_limiter  # type: ignore
 except ImportError:
     try:
-        from security.auth.rate_limiter import get_rate_limiter
-    except ImportError:
-        # Fallback rate limiter implementation that matches the original interface
+        from security.auth.rate_limiter import get_rate_limiter  # type: ignore
+    except ImportError:        # Fallback rate limiter implementation that matches the original interface
         from collections import defaultdict, deque
         import threading
         
@@ -30,8 +29,7 @@ except ImportError:
                 self._attempts_by_user = defaultdict(deque)
                 self._blocked_ips = {}
                 self._blocked_users = {}
-                self._lock = threading.Lock()
-            
+                self._lock = threading.Lock()            
             @property
             def MAX_LOGIN_ATTEMPTS(self):
                 return self._max_login_attempts
@@ -47,9 +45,10 @@ except ImportError:
             @LOGIN_WINDOW_MINUTES.setter
             def LOGIN_WINDOW_MINUTES(self, value):
                 self._login_window_minutes = value
-                
+            
             @property
-            def BLOCK_DURATION_MINUTES(self):                return self._block_duration_minutes
+            def BLOCK_DURATION_MINUTES(self):
+                return self._block_duration_minutes
                 
             @BLOCK_DURATION_MINUTES.setter
             def BLOCK_DURATION_MINUTES(self, value):
@@ -82,7 +81,7 @@ class SecurityDashboard:
     
     def __init__(self):
         self.logger = get_security_logger()
-        self.rate_limiter = get_rate_limiter()
+        self.rate_limiter = get_rate_limiter()  # type: ignore
         self.session_manager = get_session_manager()
         
     def load_security_logs(self, hours: int = 24) -> dict:

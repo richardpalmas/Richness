@@ -3,6 +3,7 @@ from pathlib import Path
 import functools
 import threading
 import time
+from typing import Optional
 
 DB_PATH = Path('richness.db')
 
@@ -303,8 +304,8 @@ def remover_usuario(usuario):
         return False
 
 
-def log_audit_event(user_id: int, event_type: str, event_data: dict = None, 
-                   ip_address: str = None, user_agent: str = None):
+def log_audit_event(user_id: int, event_type: str, event_data: Optional[dict] = None, 
+                   ip_address: Optional[str] = None, user_agent: Optional[str] = None):
     """Registra evento de auditoria no banco de dados"""
     import json
     from datetime import datetime
@@ -328,7 +329,7 @@ def log_audit_event(user_id: int, event_type: str, event_data: dict = None,
 
 
 def create_user_session(user_id: int, session_id: str, token_hash: str, 
-                       expires_at: str, ip_address: str = None, user_agent: str = None):
+                       expires_at: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None):
     """Cria nova sessão de usuário no banco"""
     from datetime import datetime
     
@@ -428,55 +429,57 @@ def update_user_login_info(user_id: int, success: bool = True):
         return False
 
 
-def secure_register_user(nome: str, usuario: str, senha: str, email: str = None, profile_pic_path: str = "") -> dict:
+def secure_register_user(nome: str, usuario: str, senha: str, email: Optional[str] = None, profile_pic_path: str = "") -> dict:
     """
     Registra usuário de forma segura com validações e logs de auditoria
     
     Returns:
         dict: {'success': bool, 'message': str, 'user_id': int (se sucesso)}
     """
-    from security.auth.authentication import SecureAuthentication
-    from security.validation.input_validator import InputValidator
-    from security.audit.security_logger import get_security_logger
-    from security.crypto.encryption import DataEncryption
-    
-    auth = SecureAuthentication()
-    validator = InputValidator()
-    logger = get_security_logger()
-    encryption = DataEncryption()
-    
+    logger = None
     try:
+        from security.auth.authentication import SecureAuthentication
+        from security.validation.input_validator import InputValidator
+        from security.audit.security_logger import get_security_logger
+        from security.crypto.encryption import DataEncryption
+        
+        auth = SecureAuthentication()
+        validator = InputValidator()
+        logger = get_security_logger()
+        encryption = DataEncryption()
+        
         # Validar dados de entrada
-        if not validator.validate_text(nome, min_length=2, max_length=100):
+        if not validator.validate_name(nome):
             return {'success': False, 'message': 'Nome deve ter entre 2 e 100 caracteres'}
             
-        if not validator.validate_text(usuario, min_length=3, max_length=50):
+        if not validator.validate_username(usuario):
             return {'success': False, 'message': 'Usuário deve ter entre 3 e 50 caracteres'}
-            
-        # Validar política de senhas
-        is_valid, msg = auth.validate_password_policy(senha)
+        
+        # Validar política de senhas usando método correto
+        from security.auth.authentication import PasswordPolicy
+        is_valid, msg = PasswordPolicy.validate_password(senha)
         if not is_valid:
             return {'success': False, 'message': msg}
             
         # Validar email se fornecido
         if email and not validator.validate_email(email):
             return {'success': False, 'message': 'Email inválido'}
-            
-        # Sanitizar inputs
-        nome = validator.sanitize_text(nome)
-        usuario = validator.sanitize_text(usuario)
+        
+        # Sanitizar inputs usando método correto
+        nome = validator.sanitize_string(nome, validator.NAME_CHARS)
+        usuario = validator.sanitize_string(usuario, validator.USERNAME_CHARS)
         
         # Verificar se usuário já existe
         conn = get_connection()
         cur = conn.cursor()
         cur.execute('SELECT 1 FROM usuarios WHERE usuario = ?', (usuario,))
         if cur.fetchone():
-            logger.log_auth_event(
-                username=usuario,
-                event_type='registration_attempt',
-                success=False,
-                details={'reason': 'username_exists'}
-            )
+            if logger:
+                logger.log_user_registration(
+                    username=usuario,
+                    success=False,
+                    error="Username already exists"
+                )
             return {'success': False, 'message': 'Usuário já existe'}
             
         # Hash da senha
@@ -485,9 +488,15 @@ def secure_register_user(nome: str, usuario: str, senha: str, email: str = None,
         # Email padrão se não fornecido
         if not email:
             email = f'{usuario}@email.com'
-            
+        
         # Criptografar dados sensíveis se necessário
-        email_encrypted = encryption.encrypt_data(email) if '@' in email and email != f'{usuario}@email.com' else email
+        from security.crypto.encryption import DataEncryption
+        try:
+            encryption = DataEncryption()
+            email_encrypted = encryption.encrypt_string(email) if '@' in email and email != f'{usuario}@email.com' else email
+        except:
+            # Fallback sem criptografia se houver problemas
+            email_encrypted = email
         
         # Inserir usuário
         cur.execute('''
@@ -499,12 +508,11 @@ def secure_register_user(nome: str, usuario: str, senha: str, email: str = None,
         conn.commit()
         
         # Log de sucesso
-        logger.log_auth_event(
-            username=usuario,
-            event_type='user_registration',
-            success=True,
-            details={'user_id': user_id, 'has_profile_pic': bool(profile_pic_path)}
-        )
+        if logger:
+            logger.log_user_registration(
+                username=usuario,
+                success=True
+            )
         
         return {
             'success': True, 
@@ -514,10 +522,17 @@ def secure_register_user(nome: str, usuario: str, senha: str, email: str = None,
         
     except Exception as e:
         # Log de erro
-        logger.log_system_event(
-            event_type='registration_error',
-            details={'error': str(e), 'username': usuario}
-        )
+        if logger:
+            try:
+                logger.log_system_event(
+                    event_type='registration_error',
+                    details={'error': str(e), 'username': usuario}
+                )
+            except:
+                # Fallback se logger não estiver disponível
+                print(f"Registration error: {e}")
+        else:
+            print(f"Registration error: {e}")
         return {'success': False, 'message': 'Erro interno do sistema'}
 
 
@@ -625,6 +640,7 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
     Returns:
         dict: Resultado da autenticação com detalhes de segurança
     """
+    logger = None
     try:
         from security.auth.authentication import SecureAuthentication
         from security.auth.rate_limiter import RateLimiter
@@ -638,47 +654,41 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
         session_manager = SessionManager()
         logger = SecurityLogger()
         validator = InputValidator()
-          # Validar inputs básicos
+        
+        # Validar inputs básicos
         if not username or len(username.strip()) == 0:
-            logger.log_authentication_attempt(
-                username, False, ip_address=ip_address, error='Empty username'
-            )
+            if logger:
+                logger.log_authentication_attempt(
+                    username, False, ip_address=ip_address, error='Empty username'
+                )
             return {'success': False, 'message': 'Nome de usuário inválido'}
             
         if not password or len(password) < 1:
-            logger.log_authentication_attempt(
-                username, False, ip_address=ip_address, error='Empty password'
-            )
+            if logger:
+                logger.log_authentication_attempt(
+                    username, False, ip_address=ip_address, error='Empty password'
+                )
             return {'success': False, 'message': 'Senha não pode estar vazia'}
         
         # Verificar rate limiting
-        login_allowed, rate_message = rate_limiter.is_login_allowed(ip_address, username)
+        login_allowed = rate_limiter.check_rate_limit(ip_address, username)
         if not login_allowed:
-            logger.log_authentication_attempt(
-                username, False, ip_address=ip_address, error='Rate limit exceeded'
-            )
+            if logger:
+                logger.log_authentication_attempt(
+                    username, False, ip_address=ip_address, error='Rate limit exceeded'
+                )
             return {
                 'success': False, 
-                'message': rate_message or 'Muitas tentativas de login. Tente novamente em alguns minutos.',
+                'message': 'Muitas tentativas de login. Tente novamente em alguns minutos.',
                 'rate_limited': True
             }
         
         # Verificar se conta está bloqueada
         if is_user_account_locked(username):
-            logger.log_authentication_attempt(
-                username, False, ip_address=ip_address, error='Account locked'
-            )
-            return {
-                'success': False, 
-                'message': 'Conta bloqueada. Entre em contato com o administrador.',
-                'account_locked': True
-            }
-        
-        # Verificar se conta está bloqueada
-        if is_user_account_locked(username):
-            logger.log_authentication_event(
-                username, ip_address, False, 'Account locked'
-            )
+            if logger:
+                logger.log_authentication_attempt(
+                    username, False, ip_address=ip_address, error='Account locked'
+                )
             return {
                 'success': False, 
                 'message': 'Conta bloqueada. Entre em contato com o administrador.',
@@ -692,18 +702,18 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
         cur.execute('''
             SELECT id, nome, usuario, senha, email, profile_pic, 
                    login_attempts, account_locked, last_login
-            FROM usuarios 
-            WHERE usuario = ?        ''', (username,))
+            FROM usuarios            WHERE usuario = ?
+        ''', (username,))
         
         user = cur.fetchone()
-        
         if not user:
             # Log tentativa com usuário inexistente
-            logger.log_authentication_attempt(
-                username, False, ip_address=ip_address, error='User not found'
-            )
+            if logger:
+                logger.log_authentication_attempt(
+                    username, False, ip_address=ip_address, error='User not found'
+                )
             # Registrar tentativa falhada para rate limiting
-            rate_limiter.record_login_attempt(ip_address, username, success=False)
+            rate_limiter.record_attempt(ip_address, username, success=False)
             # Retornar mensagem genérica para não revelar se usuário existe
             return {'success': False, 'message': 'Credenciais inválidas'}
         
@@ -728,11 +738,12 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
                 ''', (user_dict['id'],))
                 conn.commit()
                 
-                logger.log_authentication_attempt(
-                    username, False, ip_address=ip_address, 
-                    error=f'Account locked after {new_attempts} failed attempts'
-                )
-                rate_limiter.record_login_attempt(ip_address, username, success=False)
+                if logger:
+                    logger.log_authentication_attempt(
+                        username, False, ip_address=ip_address, 
+                        error=f'Account locked after {new_attempts} failed attempts'
+                    )
+                rate_limiter.record_attempt(ip_address, username, success=False)
                 return {
                     'success': False, 
                     'message': 'Conta bloqueada devido a muitas tentativas incorretas.',
@@ -740,16 +751,19 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
                 }
             else:
                 conn.commit()
-                logger.log_authentication_attempt(
-                    username, False, ip_address=ip_address, 
-                    error=f'Invalid password (attempt {new_attempts})'
-                )
-                rate_limiter.record_login_attempt(ip_address, username, success=False)
+                
+                if logger:
+                    logger.log_authentication_attempt(
+                        username, False, ip_address=ip_address, 
+                        error=f'Invalid password (attempt {new_attempts})'
+                    )
+                rate_limiter.record_attempt(ip_address, username, success=False)
                 return {
                     'success': False, 
                     'message': f'Credenciais inválidas. {5 - new_attempts} tentativas restantes.'
                 }
-          # Autenticação bem-sucedida
+        
+        # Autenticação bem-sucedida
         # Resetar tentativas de login
         cur.execute('''
             UPDATE usuarios 
@@ -759,7 +773,7 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
         conn.commit()
         
         # Registrar sucesso no rate limiter
-        rate_limiter.record_login_attempt(ip_address, username, success=True)
+        rate_limiter.record_attempt(ip_address, username, success=True)
         
         # Descriptografar email se necessário
         email = user_dict['email']
@@ -771,16 +785,16 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
             'user_id': user_dict['id'],
             'username': user_dict['usuario'],
             'nome': user_dict['nome'],
-            'email': email,
-            'role': 'user'
+            'email': email,            'role': 'user'
         }
         
         token = session_manager.create_session(session_data, ip_address)
         
         # Log de sucesso
-        logger.log_authentication_attempt(
-            username, True, ip_address=ip_address
-        )
+        if logger:
+            logger.log_authentication_attempt(
+                username, True, ip_address=ip_address
+            )
         
         return {
             'success': True,
@@ -793,20 +807,19 @@ def secure_authenticate_user(username: str, password: str, ip_address: str = '12
                 'profile_pic': user_dict['profile_pic']
             },
             'session_token': token,
-            'last_login': user_dict['last_login']
-        }
+            'last_login': user_dict['last_login']        }
         
     except Exception as e:
         # Log de erro crítico
-        try:
-            if 'logger' in locals():
+        if logger:
+            try:
                 logger.log_system_event(
                     event_type='authentication_error',
                     details={'error': str(e), 'username': username, 'ip': ip_address}
                 )
-        except:
-            pass  # Evitar erro em cascata
-            
+            except:
+                pass  # Evitar erro em cascata
+        
         print(f"Critical authentication error: {e}")
         return {
             'success': False, 
@@ -825,6 +838,7 @@ def working_authenticate_user(username: str, password: str, ip_address: str = '1
     Returns:
         dict: Resultado da autenticação com detalhes de segurança
     """
+    logger = None
     try:
         # Import only working components
         from security.auth.authentication import SecureAuthentication
@@ -920,18 +934,18 @@ def working_authenticate_user(username: str, password: str, ip_address: str = '1
                 
                 return {
                     'success': False,
-                    'message': 'Usuário ou senha incorretos'
-                }
+                    'message': 'Usuário ou senha incorretos'                }
                 
         finally:
             conn.close()
             
     except Exception as e:
         try:
-            logger.log_authentication_attempt(
-                username, False, ip_address=ip_address, 
-                error=f'Authentication system error: {str(e)}'
-            )
+            if logger:
+                logger.log_authentication_attempt(
+                    username, False, ip_address=ip_address, 
+                    error=f'Authentication system error: {str(e)}'
+                )
         except:
             pass  # If logging fails, continue
         return {

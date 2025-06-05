@@ -261,19 +261,6 @@ python scripts/vulnerability_scan.py
 - **Automated Incident Response** com playbooks
 - **Red Team exercises** regulares
 
-## 📞 Suporte e Contato
-
-### 🆘 Em Caso de Emergência
-- **Email**: security@richness.com
-- **Telefone**: +55 11 9999-9999
-- **Slack**: #security-alerts
-
-### 👥 Equipe de Segurança
-- **CISO**: Responsável pela estratégia
-- **Security Engineers**: Implementação técnica
-- **SOC Analysts**: Monitoramento 24/7
-- **Compliance Officer**: Adequação regulatória
-
 ---
 
 ## ⚡ Status Atual

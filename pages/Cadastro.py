@@ -4,7 +4,8 @@ from database import get_connection, create_tables
 from utils.config import PROFILE_PICS_DIR
 from security.auth.authentication import SecureAuthentication
 try:
-    from security.auth.rate_limiter import RateLimiter
+    from security.auth.rate_limiter import RateLimiter as SecurityRateLimiter
+    RateLimiter = SecurityRateLimiter  # type: ignore
 except ImportError:
     # Fallback to inline RateLimiter if import fails
     class RateLimiter:

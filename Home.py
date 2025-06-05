@@ -15,7 +15,7 @@ from utils.pluggy_connector import PluggyConnector
 # Importações de segurança
 from security.auth.authentication import SecureAuthentication
 try:
-    from security.auth.rate_limiter import RateLimiter
+    from security.auth.rate_limiter import RateLimiter  # type: ignore
 except ImportError:
     # Fallback to inline RateLimiter if import fails
     class RateLimiter:

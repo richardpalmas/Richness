@@ -26,7 +26,8 @@ class RateLimiter:
             if len(self._attempts_by_ip[ip_address]) >= self.MAX_LOGIN_ATTEMPTS:
                 return False
             
-            if username:                while self._attempts_by_user[username] and self._attempts_by_user[username][0] < cutoff_time:
+            if username:
+                while self._attempts_by_user[username] and self._attempts_by_user[username][0] < cutoff_time:
                     self._attempts_by_user[username].popleft()
                 
                 if len(self._attempts_by_user[username]) >= self.MAX_LOGIN_ATTEMPTS:

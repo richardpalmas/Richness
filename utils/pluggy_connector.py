@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from typing import Optional
 from langchain_core.output_parsers.string import StrOutputParser
 import streamlit as st
 
@@ -29,6 +30,14 @@ class PluggyConnector:
     _categorias_cache = {}  # Cache específico para categorias
     _descricoes_cache = {}  # Cache específico para descrições enriquecidas
     _CACHE_DIR = Path("cache")  # Diretório para cache persistente
+    
+    # Instance attributes
+    def __init__(self):
+        """Inicialização já tratada no __new__, não é necessário repetir aqui"""
+        self.client_id: str = ""
+        self.client_secret: str = ""
+        self.api_url: str = ""
+        self.access_token: Optional[str] = None
 
     def __new__(cls):
         """Implementação do padrão Singleton para garantir uma única instância"""
@@ -47,10 +56,6 @@ class PluggyConnector:
             # Inicializar modelo LLM
             cls._instance._init_llm()
         return cls._instance
-
-    def __init__(self):
-        """Inicialização já tratada no __new__, não é necessário repetir aqui"""
-        pass
 
     def _authenticate(self):
         """Autenticar com a API Pluggy e obter token de acesso"""
@@ -86,15 +91,18 @@ class PluggyConnector:
     def _init_llm(self):
         """Inicializar modelo LLM para uso em várias funcionalidades"""
         load_dotenv()
-        self.chat_model = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0,
-            api_key=os.getenv("OPENAI_API_KEY"),
-            max_tokens=150,
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0,
-        )
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            self.chat_model = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0,
+                max_tokens=150,
+                top_p=1,
+                frequency_penalty=0,
+                presence_penalty=0,
+            )
+        else:
+            self.chat_model = None
 
     def _load_persistent_cache(self):
         """Carregar cache persistente do disco"""
@@ -234,29 +242,33 @@ class PluggyConnector:
                     continue
 
                 # Se não está no cache, categorizar com IA
-                prompt = ChatPromptTemplate.from_template("""
-                    Categorize a transação abaixo em uma destas categorias exatas:
-                    Salário, Transferência, Alimentação, Transporte, Moradia, Saúde,
-                    Educação, Lazer, Vestuário, Outros.
+                if self.chat_model is not None:
+                    prompt = ChatPromptTemplate.from_template("""
+                        Categorize a transação abaixo em uma destas categorias exatas:
+                        Salário, Transferência, Alimentação, Transporte, Moradia, Saúde,
+                        Educação, Lazer, Vestuário, Outros.
 
-                    Responda APENAS com o nome da categoria, sem explicações.
+                        Responda APENAS com o nome da categoria, sem explicações.
 
-                    Descrição: {descricao}
-                    Valor: {valor}
-                    Tipo: {tipo}
-                """)
+                        Descrição: {descricao}
+                        Valor: {valor}
+                        Tipo: {tipo}
+                    """)
 
-                chain = prompt | self.chat_model | StrOutputParser()
-                try:
-                    categoria = chain.invoke({"descricao": descricao, "valor": valor, "tipo": tipo}).strip()
-                    # Validar categoria
-                    if categoria not in DEFAULT_CATEGORIES:
-                        categoria = "Outros"
+                    chain = prompt | self.chat_model | StrOutputParser()
+                    try:
+                        categoria = chain.invoke({"descricao": descricao, "valor": valor, "tipo": tipo}).strip()
+                        # Validar categoria
+                        if categoria not in DEFAULT_CATEGORIES:
+                            categoria = "Outros"
 
-                    # Armazenar no cache
-                    self._categorias_cache[cache_key] = categoria
-                    df_temp.loc[idx, "Categoria"] = categoria
-                except Exception:
+                        # Armazenar no cache
+                        self._categorias_cache[cache_key] = categoria
+                        df_temp.loc[idx, "Categoria"] = categoria
+                    except Exception:
+                        df_temp.loc[idx, "Categoria"] = "Outros"
+                else:
+                    # Se não há modelo LLM disponível, usar categoria padrão
                     df_temp.loc[idx, "Categoria"] = "Outros"
 
             # Salvar cache a cada lote processado para não perder progresso
@@ -310,25 +322,26 @@ class PluggyConnector:
                     continue
 
                 # Enriquecer com IA
-                prompt = ChatPromptTemplate.from_template("""
-                    Melhore a seguinte descrição de transação financeira para uma versão mais clara e descritiva,
-                    em até 10 palavras. Infira o provável significado baseado em padrões comuns.
-                    Apenas retorne a descrição melhorada, sem explicações ou comentários adicionais.
+                if self.chat_model is not None:
+                    prompt = ChatPromptTemplate.from_template("""
+                        Melhore a seguinte descrição de transação financeira para uma versão mais clara e descritiva,
+                        em até 10 palavras. Infira o provável significado baseado em padrões comuns.
+                        Apenas retorne a descrição melhorada, sem explicações ou comentários adicionais.
 
-                    Descrição original: {descricao}
-                """)
+                        Descrição original: {descricao}
+                    """)
 
-                chain = prompt | self.chat_model | StrOutputParser()
-                try:
-                    descricao_melhorada = chain.invoke({"descricao": desc_original}).strip()
-                    # Verificar se a descrição realmente melhorou
-                    if len(descricao_melhorada) > len(desc_original):
-                        # Armazenar no cache
-                        self._descricoes_cache[cache_key] = descricao_melhorada
-                        df_temp.loc[idx, "DescriçãoCompleta"] = descricao_melhorada
-                except Exception:
-                    # Em caso de erro, manter a descrição original
-                    pass
+                    chain = prompt | self.chat_model | StrOutputParser()
+                    try:
+                        descricao_melhorada = chain.invoke({"descricao": desc_original}).strip()
+                        # Verificar se a descrição realmente melhorou
+                        if len(descricao_melhorada) > len(desc_original):
+                            # Armazenar no cache
+                            self._descricoes_cache[cache_key] = descricao_melhorada
+                            df_temp.loc[idx, "DescriçãoCompleta"] = descricao_melhorada
+                    except Exception:
+                        # Em caso de erro, manter a descrição original
+                        pass
             
             # Salvar cache a cada lote
             self._save_persistent_cache()

@@ -15,12 +15,12 @@ class SessionManager:
     Gerenciador de sessões fallback sem dependência do JWT
     """
     
-    def __init__(self, secret_key: str = None, session_timeout_hours: int = 2):
+    def __init__(self, secret_key: Optional[str] = None, session_timeout_hours: int = 2):
         self.secret_key = secret_key or secrets.token_hex(32)
         self.session_timeout_hours = session_timeout_hours
         self.active_sessions = {}  # Em produção, usar Redis ou banco de dados
     
-    def create_session(self, user_data: Dict[str, Any]) -> str:
+    def create_session(self, user_data: Dict[str, Any]) -> Optional[str]:
         """
         Cria nova sessão e retorna token
         """

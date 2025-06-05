@@ -40,12 +40,11 @@ class SecureAuthentication:
         self.validator = InputValidator()
         self.policy = PasswordPolicy()
         
-    def _secure_hash_password(self, password: str, salt: str = None) -> Tuple[str, str]:
+    def _secure_hash_password(self, password: str, salt: Optional[str] = None) -> Tuple[str, str]:
         """Hash de senha seguro com múltiplas iterações SHA-256"""
         if salt is None:
             salt = secrets.token_hex(32)
-        
-        # Múltiplas iterações para aumentar segurança
+          # Múltiplas iterações para aumentar segurança
         hashed = password.encode()
         for _ in range(100000):  # 100,000 iterações
             hashed = hashlib.sha256(hashed + salt.encode()).digest()
@@ -58,10 +57,9 @@ class SecureAuthentication:
             computed_hash, _ = self._secure_hash_password(password, salt)
             return secrets.compare_digest(hashed, computed_hash)
         except Exception as e:
-            self.logger.log_security_event(
-                "password_verification_error",
-                {"error": str(e)},
-                "high"
+            self.logger.log_system_error(                error_type="password_verification_error",
+                error_message=str(e),
+                username="unknown"
             )
             return False
     
@@ -74,10 +72,10 @@ class SecureAuthentication:
             # Formato: salt$hash (compatível com verificação)
             return f"{salt}${hashed}"
         except Exception as e:
-            self.logger.log_security_event(
-                "password_hashing_error",
-                {"error": str(e)},
-                "critical"
+            self.logger.log_system_error(
+                error_type="password_hashing_error",
+                error_message=str(e),
+                username="unknown"
             )
             raise
     
@@ -94,10 +92,10 @@ class SecureAuthentication:
                 # Compatibilidade com formato antigo
                 return hashlib.sha256(password.encode()).hexdigest() == hashed_password
         except Exception as e:
-            self.logger.log_security_event(
-                "password_verification_error", 
-                {"error": str(e)},
-                "high"
+            self.logger.log_system_error(
+                error_type="password_verification_error",
+                error_message=str(e),
+                username="unknown"
             )
             return False
     
@@ -130,7 +128,7 @@ class SecureAuthentication:
         
         return True, "Senha válida"
     
-    def register_user(self, username: str, email: str, password: str, full_name: str = None) -> Tuple[bool, str]:
+    def register_user(self, username: str, email: str, password: str, full_name: Optional[str] = None) -> Tuple[bool, str]:
         """
         Registra novo usuário com validação completa
         """
@@ -153,9 +151,10 @@ class SecureAuthentication:
             
             cursor.execute("SELECT id FROM users WHERE username = ? OR email = ?", (username, email))
             if cursor.fetchone():
-                self.logger.log_security_event(
-                    "registration_attempt_duplicate",
-                    {"username": username, "email": email}
+                self.logger.log_user_registration(
+                    username=username,
+                    success=False,
+                    error="duplicate_user"
                 )
                 return False, "Usuário ou email já cadastrado"
             
@@ -171,22 +170,22 @@ class SecureAuthentication:
             conn.commit()
             conn.close()
             
-            self.logger.log_security_event(
-                "user_registration_success",
-                {"username": username, "email": email}
+            self.logger.log_user_registration(
+                username=username,
+                success=True
             )
             
             return True, "Usuário cadastrado com sucesso"
             
         except Exception as e:
-            self.logger.log_security_event(
-                "registration_error",
-                {"username": username, "error": str(e)},
-                "critical"
+            self.logger.log_user_registration(
+                username=username,
+                success=False,
+                error=str(e)
             )
             return False, "Erro interno durante o cadastro"
     
-    def authenticate_user(self, username: str, password: str, client_ip: str = None) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def authenticate_user(self, username: str, password: str, client_ip: Optional[str] = None) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Autentica usuário com logs de segurança
         """
@@ -203,16 +202,16 @@ class SecureAuthentication:
                 SELECT id, username, email, password, full_name, is_active, 
                        failed_login_attempts, last_failed_login
                 FROM users 
-                WHERE username = ? OR email = ?
-            """, (username, username))
-            
+                WHERE username = ? OR email = ?            """, (username, username))
             user = cursor.fetchone()
             conn.close()
             
             if not user:
-                self.logger.log_security_event(
-                    "login_attempt_invalid_user",
-                    {"username": username, "client_ip": client_ip}
+                self.logger.log_authentication_attempt(
+                    username=username,
+                    success=False,
+                    ip_address=client_ip,
+                    error="invalid_user"
                 )
                 return False, None
             
@@ -224,14 +223,15 @@ class SecureAuthentication:
                 'full_name': user[4],
                 'is_active': user[5],
                 'failed_attempts': user[6] or 0,
-                'last_failed_login': user[7]
-            }
+                'last_failed_login': user[7]            }
             
             # Verificar se conta está ativa
             if not user_data['is_active']:
-                self.logger.log_security_event(
-                    "login_attempt_inactive_account",
-                    {"username": username, "client_ip": client_ip}
+                self.logger.log_authentication_attempt(
+                    username=username,
+                    success=False,
+                    ip_address=client_ip,
+                    error="inactive_account"
                 )
                 return False, None
             
@@ -240,9 +240,9 @@ class SecureAuthentication:
                 # Login bem-sucedido - resetar tentativas falhadas
                 self._reset_failed_attempts(user_data['id'])
                 
-                self.logger.log_security_event(
-                    "login_success",
-                    {"username": username, "user_id": user_data['id'], "client_ip": client_ip}
+                self.logger.log_authentication_attempt(
+                    username=username,
+                    success=True,                    ip_address=client_ip
                 )
                 
                 return True, {
@@ -255,18 +255,19 @@ class SecureAuthentication:
                 # Login falhado - incrementar tentativas
                 self._increment_failed_attempts(user_data['id'])
                 
-                self.logger.log_security_event(
-                    "login_failure",
-                    {"username": username, "client_ip": client_ip},
-                    "medium"
+                self.logger.log_authentication_attempt(
+                    username=username,
+                    success=False,
+                    ip_address=client_ip,
+                    error="wrong_password"
                 )
                 return False, None
                 
         except Exception as e:
-            self.logger.log_security_event(
-                "authentication_error",
-                {"username": username, "error": str(e), "client_ip": client_ip},
-                "critical"
+            self.logger.log_system_error(
+                error_type="authentication_error",
+                error_message=str(e),
+                username=username
             )
             return False, None
     
