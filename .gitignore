@@ -136,3 +136,16 @@ find_*.py
 search_*.py
 rewrite_*.py
 migration_output.txt
+
+# Environment variables and secrets
+.env
+.env.local
+.env.production
+.env.staging
+*.key
+.session_key
+.encryption_key
+
+# Additional security files
+config/secrets.json
+secrets/
