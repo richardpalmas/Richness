@@ -3,6 +3,7 @@ from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection, get_usuario_por_nome
 from utils.auth import verificar_autenticacao
 from utils.pluggy_connector import PluggyConnector
+from utils.exception_handler import ExceptionHandler
 
 st.set_page_config(page_title="Pluggy - Conexões", layout="wide")
 
@@ -24,43 +25,70 @@ def get_connector():
 # Funções para manipular itemIds Pluggy no banco de dados
 
 def get_usuario_id(usuario):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT id FROM usuarios WHERE usuario = ?', (usuario,))
-    row = cur.fetchone()
-    # Não fechamos a conexão aqui, pois é gerenciada pelo get_connection()
-    return row[0] if row else None
+    def _get_user_id():
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT id FROM usuarios WHERE usuario = ?', (usuario,))
+        row = cur.fetchone()
+        return row[0] if row else None
+    
+    return ExceptionHandler.safe_execute(
+        func=_get_user_id,
+        error_handler=ExceptionHandler.handle_database_error,
+        default_return=None
+    )
 
 def load_items_db(usuario):
-    usuario_id = get_usuario_id(usuario)
-    if usuario_id is None:
-        return []
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT item_id, nome FROM pluggy_items WHERE usuario_id = ?', (usuario_id,))
-    return [{'item_id': row['item_id'], 'nome': row['nome']} for row in cur.fetchall()]
+    def _load_items():
+        usuario_id = get_usuario_id(usuario)
+        if usuario_id is None:
+            return []
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT item_id, nome FROM pluggy_items WHERE usuario_id = ?', (usuario_id,))
+        return [{'item_id': row['item_id'], 'nome': row['nome']} for row in cur.fetchall()]
+    
+    return ExceptionHandler.safe_execute(
+        func=_load_items,
+        error_handler=ExceptionHandler.handle_database_error,
+        default_return=[]
+    )
 
 def save_item_db(usuario, item_id, nome):
-    usuario_id = get_usuario_id(usuario)
-    if usuario_id is None:
-        return False
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT 1 FROM pluggy_items WHERE usuario_id = ? AND item_id = ?', (usuario_id, item_id))
-    if cur.fetchone():
-        return False
-    cur.execute('INSERT INTO pluggy_items (usuario_id, item_id, nome) VALUES (?, ?, ?)', (usuario_id, item_id, nome))
-    conn.commit()
-    return True
+    def _save_item():
+        usuario_id = get_usuario_id(usuario)
+        if usuario_id is None:
+            return False
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT 1 FROM pluggy_items WHERE usuario_id = ? AND item_id = ?', (usuario_id, item_id))
+        if cur.fetchone():
+            return False
+        cur.execute('INSERT INTO pluggy_items (usuario_id, item_id, nome) VALUES (?, ?, ?)', (usuario_id, item_id, nome))
+        conn.commit()
+        return True
+    
+    return ExceptionHandler.safe_execute(
+        func=_save_item,
+        error_handler=ExceptionHandler.handle_database_error,
+        default_return=False
+    )
 
 def remove_all_items_db(usuario):
-    usuario_id = get_usuario_id(usuario)
-    if usuario_id is None:
-        return
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('DELETE FROM pluggy_items WHERE usuario_id = ?', (usuario_id,))
-    conn.commit()
+    def _remove_items():
+        usuario_id = get_usuario_id(usuario)
+        if usuario_id is None:
+            return
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('DELETE FROM pluggy_items WHERE usuario_id = ?', (usuario_id,))
+        conn.commit()
+    
+    ExceptionHandler.safe_execute(
+        func=_remove_items,
+        error_handler=ExceptionHandler.handle_database_error,
+        default_return=None
+    )
 
 usuario = st.session_state.get('usuario', 'default')
 items = load_items_db(usuario)
@@ -94,14 +122,24 @@ if items:
         with col2:
             if st.button(f"Testar", key=f"test_{item['item_id']}"):
                 with st.spinner("Testando item ID..."):
-                    try:
+                    def _test_item():
                         resultado = pluggy.obter_saldo_atual([(item['item_id'], item['nome'])])
                         if resultado and len(resultado) >= 4:
-                            st.success("✅ Item ID válido!")
+                            return "✅ Item ID válido!"
                         else:
-                            st.error("❌ Item ID inválido ou sem dados")
-                    except Exception as e:
-                        st.error(f"❌ Erro: {str(e)}")
+                            return "❌ Item ID inválido ou sem dados"
+                    
+                    message = ExceptionHandler.safe_execute(
+                        func=_test_item,
+                        error_handler=ExceptionHandler.handle_pluggy_error,
+                        default_return="❌ Erro ao testar item ID",
+                        show_in_streamlit=False
+                    )
+                    
+                    if "✅" in message:
+                        st.success(message)
+                    else:
+                        st.error(message)
     
     st.divider()
     if st.button("Remover todas as conexões"):
@@ -120,18 +158,28 @@ with st.expander("🔧 Diagnóstico e Solução de Problemas"):
     2. **Conecte suas contas bancárias** usando o widget oficial
     3. **Copie os itemIDs** gerados para suas contas
     4. **Cole aqui** para começar a usar o sistema
-    
-    **Importante**: ItemIDs devem pertencer às suas credenciais do Pluggy.
+      **Importante**: ItemIDs devem pertencer às suas credenciais do Pluggy.
     """)
-      if st.button("Testar Conectividade"):
-        pluggy = get_connector()
-        with st.spinner("Testando conectividade..."):
-            try:
-                # Teste simples de conectividade
-                if hasattr(pluggy, '_authenticate'):
-                    st.success("✅ Conectividade com Pluggy funcionando")
-                else:
-                    st.error("❌ Problema na conectividade")
-            except Exception as e:
-                st.error(f"❌ Erro de conectividade: {str(e)}")
+
+if st.button("Testar Conectividade"):
+    pluggy = get_connector()
+    with st.spinner("Testando conectividade..."):
+        def _test_connectivity():
+            # Teste simples de conectividade
+            if hasattr(pluggy, '_authenticate'):
+                return "✅ Conectividade com Pluggy funcionando"
+            else:
+                return "❌ Problema na conectividade"
+        
+        message = ExceptionHandler.safe_execute(
+            func=_test_connectivity,
+            error_handler=ExceptionHandler.handle_pluggy_error,
+            default_return="❌ Erro de conectividade",
+            show_in_streamlit=False
+        )
+        
+        if "✅" in message:
+            st.success(message)
+        else:
+            st.error(message)
 

@@ -4,7 +4,7 @@ import pandas as pd
 
 def filtro_data(df, key_prefix="default"):
     """
-    Componente reutilizável para filtro de data em dataframes.
+    Componente reutilizável para filtro de data em dataframes
 
     Parameters:
     - df: DataFrame pandas com coluna 'Data' em formato datetime

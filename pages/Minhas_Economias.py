@@ -6,6 +6,7 @@ from utils.pluggy_connector import PluggyConnector
 from utils.auth import verificar_autenticacao
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario, calcular_resumo_financeiro
+from utils.exception_handler import ExceptionHandler
 
 st.set_page_config(layout="wide")
 
@@ -26,14 +27,22 @@ def get_pluggy_connector():
 @st.cache_data(ttl=600)
 def carregar_dados_economias(usuario):
     """Carrega dados de economias com cache para performance"""
-    pluggy = get_pluggy_connector()
-    itemids_data = pluggy.load_itemids_db(usuario) if usuario else None
+    def _carregar_dados():
+        pluggy = get_pluggy_connector()
+        itemids_data = pluggy.load_itemids_db(usuario) if usuario else None
+        
+        if itemids_data:
+            df = pluggy.buscar_extratos(itemids_data)
+            saldos_info = pluggy.obter_saldo_atual(itemids_data)
+            return saldos_info, df
+        return None, pd.DataFrame()
     
-    if itemids_data:
-        df = pluggy.buscar_extratos(itemids_data)
-        saldos_info = pluggy.obter_saldo_atual(itemids_data)
-        return saldos_info, df
-    return None, pd.DataFrame()
+    return ExceptionHandler.safe_execute(
+        func=_carregar_dados,
+        error_handler=ExceptionHandler.handle_pluggy_error,
+        default_return=(None, pd.DataFrame()),
+        show_in_streamlit=True
+    )
 
 # Carregar dados principais
 usuario = st.session_state.get('usuario', 'default')
@@ -57,12 +66,11 @@ categorias_selecionadas = filtro_categorias(df, "Filtrar por Categorias", "econo
 df_filtrado = aplicar_filtros(df, start_date, end_date, categorias_selecionadas)
 
 # Resumo financeiro atual
-if saldos_info and len(saldos_info) >= 4:
-    saldo_positivo, saldo_negativo, contas_detalhes, saldo_total = saldos_info
-    col1, col2, col3 = st.columns(3)
-    col1.metric("💰 Saldo Total", formatar_valor_monetario(saldo_total))
-    col2.metric("🟢 Ativos", formatar_valor_monetario(saldo_positivo))
-    col3.metric("🔴 Passivos", formatar_valor_monetario(abs(saldo_negativo)))
+if saldos_info and len(saldos_info) >= 3:
+    saldo_positivo, saldo_negativo, contas_detalhes = saldos_info[:3]
+    col1, col2 = st.columns(2)
+    col1.metric("🟢 Ativos", formatar_valor_monetario(saldo_positivo))
+    col2.metric("🔴 Passivos", formatar_valor_monetario(abs(saldo_negativo)))
 
 # Resumo do período filtrado
 resumo = calcular_resumo_financeiro(df_filtrado)
