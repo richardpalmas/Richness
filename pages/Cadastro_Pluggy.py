@@ -107,6 +107,11 @@ if st.button("Cadastrar"):
         st.warning("Este itemId já está cadastrado.")
     else:
         if save_item_db(usuario, novo_item_id, novo_nome):
+            # Limpar caches para garantir atualização imediata
+            import streamlit as st
+            from utils.pluggy_connector import PluggyConnector
+            st.cache_data.clear()
+            PluggyConnector().limpar_cache()
             st.success(f"itemId '{novo_item_id}' cadastrado com o nome '{novo_nome}' com sucesso!")
             st.rerun()
         else:
@@ -144,6 +149,11 @@ if items:
     st.divider()
     if st.button("Remover todas as conexões"):
         remove_all_items_db(usuario)
+        # Limpar caches para garantir atualização imediata
+        import streamlit as st
+        from utils.pluggy_connector import PluggyConnector
+        st.cache_data.clear()
+        PluggyConnector().limpar_cache()
         st.success("Todos os itemIds foram removidos com sucesso!")
         st.rerun()
 else:
