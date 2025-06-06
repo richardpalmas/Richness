@@ -155,5 +155,11 @@ migration_output.txt
 config/secrets.json
 secrets/
 
+# Test and diagnostic files
+scripts/teste_historico/
+scripts/teste_historico/**
+**/teste_historico/
+**/teste_historico/**
+
 # others
 auto-continue.js
