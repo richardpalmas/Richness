@@ -43,6 +43,8 @@ def verificar_autenticacao():
     """
     Versão simplificada que interrompe a execução se o usuário não estiver autenticado.
     Útil para páginas que não devem ser carregadas sem autenticação.
+    Retorna True se autenticado, não retorna nada se não autenticado (pois para com st.stop()).
     """
     if not checar_autenticacao():
         st.stop()
+    return True

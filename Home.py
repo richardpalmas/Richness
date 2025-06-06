@@ -286,24 +286,56 @@ if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos
             # 2. Testar conectividade e forçar refresh dos dados
             sucesso = 0
             erro = 0
+            sync_sucesso = 0
             
             # Primeiro, testar a autenticação
             if pluggy.testar_autenticacao():
+                # Definir variável de ambiente para forçar refresh
+                os.environ["FORCE_REFRESH"] = "true"
+                
                 # Limpar cache para forçar dados frescos
                 pluggy.limpar_cache()
                 
-                # Testar cada item ID individualmente
+                status_container.info("🔄 Iniciando sincronização forçada com instituições bancárias...")
+                
+                # Para cada item, forçar sincronização no Pluggy antes de validar
                 for item in itemids_data:
-                    if pluggy.testar_item_id(item['item_id']):
-                        sucesso += 1
+                    status_container.info(f"🔄 Sincronizando {item.get('nome', item['item_id'])}...")
+                    
+                    # Forçar sync no Pluggy (dados frescos dos bancos)
+                    if pluggy.forcar_sync_item(item['item_id']):
+                        sync_sucesso += 1
+                        # Aguardar um pouco para o sync processar
+                        time.sleep(2)
+                        
+                        # Agora testar se o item está funcionando
+                        if pluggy.testar_item_id(item['item_id']):
+                            sucesso += 1
+                        else:
+                            erro += 1
                     else:
                         erro += 1
                 
                 # 3. Mostrar resultados da sincronização
+                if sync_sucesso > 0:
+                    status_container.success(f"✅ {sync_sucesso} itens sincronizados com instituições bancárias!")
                 if sucesso > 0:
-                    status_container.success(f"✅ {sucesso} itens validados com sucesso!")
+                    status_container.success(f"✅ {sucesso} itens validados com dados frescos!")
                 if erro > 0:
                     status_container.warning(f"⚠️ {erro} itens com erro ou inválidos")
+                    
+                # Aguardar um pouco mais para garantir que os dados foram processados
+                time.sleep(3)
+                status_container.info("🔄 Carregando dados atualizados...")
+                
+                # Forçar carregamento de dados frescos
+                saldos_info = pluggy.obter_saldo_atual(itemids_data)
+                df_extratos = pluggy.buscar_extratos(itemids_data)
+                df_cartoes = pluggy.buscar_cartoes(itemids_data)
+                
+                # Remover variável de ambiente
+                os.environ.pop("FORCE_REFRESH", None)
+                
             else:
                 status_container.error("❌ Falha na autenticação com a API Pluggy")
                 erro = len(itemids_data)

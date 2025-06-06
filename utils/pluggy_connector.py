@@ -7,10 +7,10 @@ import hashlib
 import pickle
 from pathlib import Path
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+# from langchain_openai import ChatOpenAI
+# from langchain_core.prompts import ChatPromptTemplate
 from typing import Optional
-from langchain_core.output_parsers.string import StrOutputParser
+# from langchain_core.output_parsers.string import StrOutputParser
 import streamlit as st
 
 from database import get_connection
@@ -34,10 +34,12 @@ class PluggyConnector:
     # Instance attributes
     def __init__(self):
         """Inicialização já tratada no __new__, não é necessário repetir aqui"""
-        self.client_id: str = ""
-        self.client_secret: str = ""
-        self.api_url: str = ""
-        self.access_token: Optional[str] = None
+        # Don't reset the values that were already set in __new__
+        if not hasattr(self, 'client_id'):
+            self.client_id: str = ""
+            self.client_secret: str = ""
+            self.api_url: str = ""
+            self.access_token: Optional[str] = None
 
     def __new__(cls):
         """Implementação do padrão Singleton para garantir uma única instância"""
@@ -90,19 +92,21 @@ class PluggyConnector:
 
     def _init_llm(self):
         """Inicializar modelo LLM para uso em várias funcionalidades"""
-        load_dotenv()
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key:
-            self.chat_model = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0,
-                max_tokens=150,
-                top_p=1,
-                frequency_penalty=0,
-                presence_penalty=0,
-            )
-        else:
-            self.chat_model = None
+        # Temporarily disabled due to dependency issues
+        # load_dotenv()
+        # api_key = os.getenv("OPENAI_API_KEY")
+        # if api_key:
+        #     self.chat_model = ChatOpenAI(
+        #         model="gpt-4o-mini",
+        #         temperature=0,
+        #         max_completion_tokens=150,
+        #         top_p=1,
+        #         frequency_penalty=0,
+        #         presence_penalty=0,
+        #     )
+        # else:
+        #     self.chat_model = None
+        self.chat_model = None
 
     def _load_persistent_cache(self):
         """Carregar cache persistente do disco"""
@@ -243,21 +247,30 @@ class PluggyConnector:
 
                 # Se não está no cache, categorizar com IA
                 if self.chat_model is not None:
-                    prompt = ChatPromptTemplate.from_template("""
-                        Categorize a transação abaixo em uma destas categorias exatas:
-                        Salário, Transferência, Alimentação, Transporte, Moradia, Saúde,
-                        Educação, Lazer, Vestuário, Outros.
+                    # Temporarily disabled due to dependency issues
+                    # prompt = ChatPromptTemplate.from_template("""
+                    #     Categorize a transação abaixo em uma destas categorias exatas:
+                    #     Salário, Transferência, Alimentação, Transporte, Moradia, Saúde,
+                    #     Educação, Lazer, Vestuário, Outros.
 
-                        Responda APENAS com o nome da categoria, sem explicações.
+                    #     Responda APENAS com o nome da categoria, sem explicações.
 
-                        Descrição: {descricao}
-                        Valor: {valor}
-                        Tipo: {tipo}
-                    """)
+                    #     Descrição: {descricao}
+                    #     Valor: {valor}
+                    #     Tipo: {tipo}
+                    # """)
 
-                    chain = prompt | self.chat_model | StrOutputParser()
+                    # chain = prompt | self.chat_model | StrOutputParser()
                     try:
-                        categoria = chain.invoke({"descricao": descricao, "valor": valor, "tipo": tipo}).strip()
+                        # categoria = chain.invoke({"descricao": descricao, "valor": valor, "tipo": tipo}).strip()
+                        # Use simple categorization for now
+                        if "transferencia" in descricao.lower() or "pix" in descricao.lower():
+                            categoria = "Transferência"
+                        elif "salario" in descricao.lower():
+                            categoria = "Salário"
+                        else:
+                            categoria = "Outros"
+                        
                         # Validar categoria
                         if categoria not in DEFAULT_CATEGORIES:
                             categoria = "Outros"
@@ -323,17 +336,21 @@ class PluggyConnector:
 
                 # Enriquecer com IA
                 if self.chat_model is not None:
-                    prompt = ChatPromptTemplate.from_template("""
-                        Melhore a seguinte descrição de transação financeira para uma versão mais clara e descritiva,
-                        em até 10 palavras. Infira o provável significado baseado em padrões comuns.
-                        Apenas retorne a descrição melhorada, sem explicações ou comentários adicionais.
+                    # Temporarily disabled due to dependency issues
+                    # prompt = ChatPromptTemplate.from_template("""
+                    #     Melhore a seguinte descrição de transação financeira para uma versão mais clara e descritiva,
+                    #     em até 10 palavras. Infira o provável significado baseado em padrões comuns.
+                    #     Apenas retorne a descrição melhorada, sem explicações ou comentários adicionais.
 
-                        Descrição original: {descricao}
-                    """)
+                    #     Descrição original: {descricao}
+                    # """)
 
-                    chain = prompt | self.chat_model | StrOutputParser()
+                    # chain = prompt | self.chat_model | StrOutputParser()
                     try:
-                        descricao_melhorada = chain.invoke({"descricao": desc_original}).strip()
+                        # descricao_melhorada = chain.invoke({"descricao": desc_original}).strip()
+                        # Use original description for now
+                        descricao_melhorada = desc_original
+                        
                         # Verificar se a descrição realmente melhorou
                         if len(descricao_melhorada) > len(desc_original):
                             # Armazenar no cache
@@ -355,13 +372,20 @@ class PluggyConnector:
         if not itemids_data:
             return None
 
+        # Verificar se o usuário explicitamente solicitou ignorar o cache
+        force_refresh = os.environ.get("FORCE_REFRESH", "False").lower() == "true"
+
         # Gerar chave de cache baseada nos itemIds
         cache_key = self._get_hash("saldos_" + "_".join(sorted([item['item_id'] for item in itemids_data])))
         
-        # Verificar cache
-        cached_data = self._get_from_cache(cache_key)
-        if cached_data:
+        # Verificar cache (ignorar se force_refresh for True)
+        cached_data = None if force_refresh else self._get_from_cache(cache_key)
+        if cached_data is not None:
+            print(f"Usando dados de saldo em cache para {len(itemids_data)} item IDs")
             return cached_data
+
+        # Se chegamos aqui, precisamos buscar dados frescos da API
+        print(f"Buscando dados de saldo frescos da API para {len(itemids_data)} item IDs")
 
         saldo_positivo = 0
         saldo_negativo = 0
@@ -780,6 +804,48 @@ class PluggyConnector:
                 
         except Exception as e:
             print(f"❌ Erro ao testar item ID: {str(e)}")
+            return False
+    
+    def forcar_sync_item(self, item_id):
+        """
+        Força sincronização de um item específico usando PATCH /items/{id}
+        Isso faz o Pluggy buscar dados frescos dos bancos antes de retornar
+        """
+        try:
+            self._authenticate()
+            
+            print(f"🔄 Forçando sincronização do item ID: {item_id}")
+            
+            # Fazer PATCH para o endpoint de update do item
+            # Isso força o Pluggy a sincronizar dados frescos com a instituição bancária
+            response = requests.patch(
+                f"{self.api_url}/items/{item_id}",
+                headers=self.get_headers(),
+                json={}  # Corpo vazio - apenas trigger o sync sem atualizar credenciais
+            )
+            
+            print(f"Status da sincronização forçada: {response.status_code}")
+            
+            if response.status_code == 200:
+                sync_data = response.json()
+                print(f"✅ Sincronização iniciada com sucesso para item {item_id}")
+                print(f"Status do item: {sync_data.get('status', 'N/A')}")
+                return True
+            elif response.status_code == 400:
+                print(f"⚠️ Item {item_id} pode já estar sincronizando ou ter erro de credenciais")
+                return False
+            elif response.status_code == 403:
+                print(f"❌ Item ID não pertence a este cliente Pluggy")
+                return False
+            elif response.status_code == 404:
+                print(f"❌ Item ID não encontrado")
+                return False
+            else:
+                print(f"❌ Erro inesperado na sincronização: {response.text}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Erro ao forçar sincronização do item ID: {str(e)}")
             return False
     
     def _aplicar_categorizacao_basica(self, df):
