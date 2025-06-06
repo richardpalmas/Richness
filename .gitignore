@@ -63,6 +63,11 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# Project documentation (including historical files)
+docs/
+docs/**
+!docs/README.md
+
 # PyBuilder
 target/
 
@@ -149,3 +154,6 @@ migration_output.txt
 # Additional security files
 config/secrets.json
 secrets/
+
+# others
+auto-continue.js
