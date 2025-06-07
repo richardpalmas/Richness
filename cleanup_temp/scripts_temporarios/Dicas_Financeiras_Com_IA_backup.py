@@ -1,6 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
 """
-Página de Dicas Financeiras com IA - Versão Corrigida
+Página de Dicas Financeiras com IA - Versão Completa e Funcional
 Implementa conexão robusta com LangChain e OpenAI
 """
 
@@ -71,8 +71,7 @@ class AIServiceManager:
             
             if not api_key.startswith("sk-"):
                 return False, "Formato de chave OpenAI inválido"
-            
-            return True, "Chave API válida"
+              return True, "Chave API válida"
         except Exception as e:
             return False, f"Erro ao validar chave API: {str(e)}"
     
@@ -100,14 +99,11 @@ class AIServiceManager:
         # Tentar inicializar o cliente OpenAI
         try:
             from langchain_openai import ChatOpenAI
-            from pydantic import SecretStr
             
             config = get_config()
             api_key = config.get_openai_api_key()
             # Use environment variable approach for better compatibility
-            os.environ["OPENAI_API_KEY"] = api_key
-            
-            self._openai_client = ChatOpenAI(
+            os.environ["OPENAI_API_KEY"] = api_key            self._openai_client = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.2,
                 max_completion_tokens=150,
@@ -125,7 +121,6 @@ class AIServiceManager:
             self._error_message = f"Erro ao inicializar OpenAI: {str(e)}"
             logger.error(self._error_message)
             return False
-    
     def get_client(self):
         """Retorna o cliente OpenAI se disponível"""
         if not self._langchain_available:
@@ -283,9 +278,6 @@ def main():
     st.title("💡 Dicas Financeiras com IA")
     st.markdown("---")
 
-    # Status da IA
-    display_ai_status()
-
     # Seção principal
     col1, col2 = st.columns([2, 1])
     
@@ -298,9 +290,9 @@ def main():
                     # Buscar dados do usuário logado
                     user_id = st.session_state.get('usuario', 'default')
                     financial_data = get_financial_data(user_id)
-                    
+                    # Diagnóstico: Exibir dados brutos se necessário
+                    # st.write(financial_data)
                     analysis_result = financial_service.analyze_financial_data(financial_data)
-                    
                     with st.expander("📈 Resumo dos Dados", expanded=True):
                         col_a, col_b, col_c = st.columns(3)
                         with col_a:
@@ -313,10 +305,8 @@ def main():
                             gastos_cartao = financial_data.get('cartoes', {}).get('gastos', 0)
                             total_gastos = despesas + gastos_cartao
                             st.metric("Total de Gastos", formatar_valor_monetario(total_gastos))
-                    
                     st.subheader("🤖 Análise e Dicas Personalizadas")
                     st.markdown(analysis_result)
-                    
                     if "categorias" in financial_data and financial_data["categorias"]:
                         st.subheader("📊 Gastos por Categoria")
                         categorias_df = pd.DataFrame(
@@ -324,7 +314,6 @@ def main():
                             columns=['Categoria', 'Valor']
                         )
                         st.bar_chart(categorias_df.set_index('Categoria'))
-                        
                 except Exception as e:
                     st.error(f"❌ Erro ao processar análise: {str(e)}")
                     st.info("Se o erro persistir, envie esta mensagem para o suporte.")
@@ -334,26 +323,21 @@ def main():
         st.markdown("---")
         st.subheader("🤖 Pergunte à IA sobre suas finanças")
         user_question = st.text_input("Digite sua pergunta para a IA:", key="pergunta_ia")
-        
         if st.button("Perguntar para a IA"):
-            if user_question:
-                with st.spinner("A IA está analisando sua pergunta e seu histórico financeiro..."):
-                    try:
-                        user_id = st.session_state.get('usuario', 'default')
-                        financial_data = get_financial_data(user_id)
-                        
-                        # Inicializar IA antes de obter o client
-                        if not ai_manager.initialize():
-                            status = ai_manager.get_status()
-                            raise RuntimeError(f"IA indisponível: {status['error']}")
-                        
-                        client = ai_manager.get_client()
-                        if not client:
-                            status = ai_manager.get_status()
-                            raise RuntimeError(f"IA indisponível: {status['error']}")
-                        
-                        # Montar prompt combinando histórico e pergunta
-                        prompt = f"""
+            with st.spinner("A IA está analisando sua pergunta e seu histórico financeiro..."):
+                try:
+                    user_id = st.session_state.get('usuario', 'default')
+                    financial_data = get_financial_data(user_id)
+                    # Inicializar IA antes de obter o client
+                    if not ai_manager.initialize():
+                        status = ai_manager.get_status()
+                        raise RuntimeError(f"IA indisponível: {status['error']}")
+                    client = ai_manager.get_client()
+                    if not client:
+                        status = ai_manager.get_status()
+                        raise RuntimeError(f"IA indisponível: {status['error']}")
+                    # Montar prompt combinando histórico e pergunta
+                    prompt = f"""
 Você é um assistente financeiro. Considere o seguinte histórico financeiro do usuário dos últimos 4 meses:
 
 Dados Financeiros:
@@ -366,16 +350,12 @@ Dados Financeiros:
 Pergunta do usuário: {user_question}
 
 Responda de forma personalizada, prática e clara, considerando o contexto financeiro apresentado."""
-                        
-                        resposta = client.invoke(prompt)
-                        resposta_texto = resposta.content if hasattr(resposta, 'content') else str(resposta)
-                        st.markdown(f"**Resposta da IA:**\n{resposta_texto}")
-                        
-                    except Exception as e:
-                        st.error(f"❌ Erro ao processar pergunta: {str(e)}")
-                        logger.error(f"Erro detalhado na pergunta IA: {str(e)}", exc_info=True)
-            else:
-                st.warning("Por favor, digite uma pergunta.")
+                    resposta = client.invoke(prompt)
+                    resposta_texto = resposta.content if hasattr(resposta, 'content') else str(resposta)
+                    st.markdown(f"**Resposta da IA:**\n{resposta_texto}")
+                except Exception as e:
+                    st.error(f"❌ Erro ao processar pergunta: {str(e)}")
+                    logger.error(f"Erro detalhado na pergunta IA: {str(e)}", exc_info=True)
     
     with col2:
         st.subheader("📚 Dicas Educativas")
@@ -446,5 +426,4 @@ Responda de forma personalizada, prática e clara, considerando o contexto finan
     """, unsafe_allow_html=True)
 
 # Executar a aplicação
-if __name__ == "__main__":
-    main()
+main()

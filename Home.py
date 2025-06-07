@@ -119,6 +119,18 @@ def secure_authenticate_user(usuario_input: str, senha_input: str) -> tuple[bool
             if user_data['usuario'] == 'richardpalmas' and user_role != 'admin':
                 st.session_state['user_role'] = 'admin'
             
+            # Executar categorização automática em background
+            try:
+                from utils.auto_categorization import run_auto_categorization_on_login
+                categorization_result = run_auto_categorization_on_login(user_data['id'])
+                
+                # Armazenar resultado para mostrar notificação
+                st.session_state['categorization_result'] = categorization_result
+                
+            except Exception as e:
+                print(f"Erro na categorização automática: {e}")
+                # Não falha o login se a categorização der erro
+            
             return True, "✅ Login realizado com sucesso!"
         else:
             # Atualizar tentativas de login no banco
@@ -252,6 +264,31 @@ if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação"):
     st.session_state['usuario'] = ''
     st.rerun()
 
+# Mostrar notificação de categorização automática melhorada
+if 'categorization_result' in st.session_state:
+    cat_result = st.session_state['categorization_result']
+    
+    if cat_result['success']:
+        if cat_result['ai_available']:
+            if cat_result['processed_count'] > 0:
+                st.sidebar.success(f"✨ IA categorizou {cat_result['processed_count']} novas transações com categorias específicas")
+            else:
+                st.sidebar.info("✅ Todas as transações já estão categorizadas")
+        else:
+            if cat_result['fallback_count'] > 0:
+                st.sidebar.warning(f"🔧 **Modo Fallback Ativo**\n\n"
+                                 f"📋 {cat_result['fallback_count']} transações categorizadas automaticamente\n\n"
+                                 f"ℹ️ **Sistema de backup em uso** - Categorias mais específicas disponíveis com IA configurada")
+                st.sidebar.info("💡 **Dica**: Configure a IA nos parâmetros do sistema para categorias ainda mais precisas")
+            else:
+                st.sidebar.info("✅ Todas as transações já estão categorizadas")
+    else:
+        if cat_result['error_count'] > 0:
+            st.sidebar.error("❌ Erro na categorização automática - Verifique os logs do sistema")
+    
+    # Remover resultado após mostrar
+    del st.session_state['categorization_result']
+
 # Exibir foto de perfil e mensagem de boas-vindas
 if 'usuario' in st.session_state:
     boas_vindas_com_foto(st.session_state['usuario'])
@@ -261,9 +298,6 @@ if 'confirmando_remocao' not in st.session_state:
     st.session_state['confirmando_remocao'] = False
 
 # Inicializar estado para modo de carregamento
-if 'carregamento_rapido' not in st.session_state:
-    st.session_state['carregamento_rapido'] = True  # Padrão: carregamento rápido
-
 # Controles de Performance na Sidebar
 st.sidebar.markdown("### ⚡ Controles de Performance")
 
@@ -364,27 +398,9 @@ if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos
     if success:
         st.rerun()
 
-carregamento_rapido = st.sidebar.checkbox(
-    "Carregamento Rápido (sem IA)", 
-    value=st.session_state.get('carregamento_rapido', True),
-    help="Desabilita processamento de IA para carregamento mais rápido. Use 'Processar com IA' depois para categorização completa."
-)
-
-# Atualizar variável de ambiente com base na escolha
+# Ensure AI processing is always enabled
 import os
-os.environ["SKIP_LLM_PROCESSING"] = "true" if carregamento_rapido else "false"
-st.session_state['carregamento_rapido'] = carregamento_rapido
-
-# Botão para processar com IA após carregamento rápido
-if carregamento_rapido:
-    if st.sidebar.button("🤖 Processar com IA", help="Aplica categorização e enriquecimento de IA aos dados já carregados"):
-        # Limpar cache para forçar reprocessamento com IA
-        pluggy = PluggyConnector()
-        pluggy.limpar_cache()
-        os.environ["SKIP_LLM_PROCESSING"] = "false"
-        st.cache_data.clear()
-        st.sidebar.success("Processamento com IA concluído!")
-        st.rerun()
+os.environ["SKIP_LLM_PROCESSING"] = "false"
 
 # Botão Remover Usuário
 if not st.session_state['confirmando_remocao']:
@@ -493,7 +509,7 @@ def calcular_dividas_total(saldos_info):
 
 @st.cache_data(ttl=600)
 def gerar_grafico_categorias_otimizado(df_filtrado):
-    """Gera gráfico de categorias com cache otimizado."""
+    """Gera gráfico de categorias com cache otimizado e layout responsivo."""
     if df_filtrado.empty or "Categoria" not in df_filtrado.columns:
         return None
         
@@ -513,32 +529,53 @@ def gerar_grafico_categorias_otimizado(df_filtrado):
         # Ordenar por valor para melhor visualização
         categoria_resumo = categoria_resumo.sort_values("ValorAbs", ascending=False)
         
+        # Agrupar categorias pequenas em "Outros" se houver muitas categorias
+        if len(categoria_resumo) > 8:
+            # Manter top 7 categorias e agrupar o resto em "Outros"
+            top_categorias = categoria_resumo.head(7)
+            outros_valor = categoria_resumo.tail(len(categoria_resumo) - 7)["ValorAbs"].sum()
+            
+            if outros_valor > 0:
+                outros_row = pd.DataFrame({
+                    "Categoria": ["Outros"],
+                    "Valor": [0],  # Valor original não usado
+                    "ValorAbs": [outros_valor]
+                })
+                categoria_resumo = pd.concat([top_categorias, outros_row], ignore_index=True)
+        
         fig = px.pie(categoria_resumo, 
                     names="Categoria", 
                     values="ValorAbs",
                     title="Distribuição por Categoria", 
                     template="plotly_white")
         
-        # Configurações de layout para melhor alinhamento
+        # Configurações de layout responsivo
         fig.update_layout(
-            height=350,
-            font=dict(size=12),
+            height=400,
+            font=dict(size=11),
+            showlegend=True,
             legend=dict(
-                orientation="v",
-                yanchor="middle",
-                y=0.5,
-                xanchor="left",
-                x=1.01
+                orientation="h",  # Legenda horizontal
+                yanchor="top",
+                y=-0.1,
+                xanchor="center",
+                x=0.5,
+                font=dict(size=10)
             ),
-            margin=dict(l=20, r=80, t=50, b=20)
+            margin=dict(l=10, r=10, t=50, b=80),
+            title=dict(
+                x=0.5,
+                font=dict(size=14)
+            )
         )
         
         # Configurações das fatias do gráfico
         fig.update_traces(
-            textposition='inside',
-            textinfo='percent+label',
+            textposition='auto',
+            textinfo='percent',
             textfont_size=10,
-            pull=[0.1 if name == "Outros" else 0 for name in categoria_resumo["Categoria"]]
+            hovertemplate='<b>%{label}</b><br>Valor: R$ %{value:,.2f}<br>Percentual: %{percent}<extra></extra>',
+            pull=[0.05 if name == "Outros" else 0 for name in categoria_resumo["Categoria"]]
         )
         
         return fig
@@ -657,6 +694,13 @@ if not df_filtrado.empty:
         fig2 = gerar_grafico_evolucao_otimizado(df_filtrado)
         if fig2:
             st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
+# Checagem de IA ativa
+pluggy = get_pluggy_connector()
+if getattr(pluggy, "chat_model", None) is None:
+    st.warning("⚠️ O processamento com IA está ativado, mas o modelo LLM não foi inicializado. Verifique a variável OPENAI_API_KEY e as dependências do LangChain/OpenAI.")
+else:
+    st.info("🤖 O processamento com IA está ATIVO! As transações serão categorizadas de forma inteligente.")
 
 # Extrato detalhado (colapsado)
 with st.expander("📋 Ver Extrato Detalhado"):

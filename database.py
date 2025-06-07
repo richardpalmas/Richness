@@ -199,8 +199,7 @@ def create_tables():
             FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
         )
     ''')
-    
-    # Tabela de roles de usuário para controle de acesso
+      # Tabela de roles de usuário para controle de acesso
     cur.execute('''
         CREATE TABLE IF NOT EXISTS user_roles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -210,6 +209,24 @@ def create_tables():
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, role),
             FOREIGN KEY(user_id) REFERENCES usuarios(id)
+        )
+    ''')
+    
+    # Tabela para armazenar categorizações de IA
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS ai_categorizations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            transaction_type TEXT NOT NULL,  -- 'extrato', 'cartao', 'economia'
+            transaction_id INTEGER NOT NULL,
+            original_description TEXT,
+            original_category TEXT,
+            ai_category TEXT,
+            ai_confidence REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(transaction_type, transaction_id),
+            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
         )
     ''')
     
@@ -229,13 +246,17 @@ def create_tables():
     cur.execute('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON user_sessions(user_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON user_sessions(session_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON user_sessions(expires_at)')
-    
-    # Índices adicionais para consultas frequentes
+      # Índices adicionais para consultas frequentes
     cur.execute('CREATE INDEX IF NOT EXISTS idx_economias_data ON economias(data)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_cartoes_data ON cartoes(data)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_extratos_data ON extratos(data)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_extratos_categoria ON extratos(categoria)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_cartoes_categoria ON cartoes(categoria)')
+    
+    # Índices para tabela de categorizações de IA
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_ai_categorizations_usuario_id ON ai_categorizations(usuario_id)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_ai_categorizations_transaction ON ai_categorizations(transaction_type, transaction_id)')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_ai_categorizations_processed_at ON ai_categorizations(processed_at)')
 
     conn.commit()
 
@@ -1013,6 +1034,162 @@ def set_user_role(user_id, role):
         print(f"Erro ao definir role do usuário: {e}")
         return False
 
-if __name__ == '__main__':
-    create_tables()
+# Funções para categorizações de IA
+def get_uncategorized_transactions(usuario_id: int, limit: int = 100) -> dict:
+    """
+    Retorna transações que ainda não foram categorizadas pela IA
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        uncategorized = {
+            'extratos': [],
+            'cartoes': [],
+            'economias': []
+        }
+        
+        # Extratos não categorizados
+        cur.execute('''
+            SELECT e.id, e.data, e.valor, e.tipo, e.descricao, e.categoria
+            FROM extratos e
+            LEFT JOIN ai_categorizations ac ON ac.transaction_type = 'extrato' AND ac.transaction_id = e.id
+            WHERE e.usuario_id = ? AND ac.id IS NULL
+            ORDER BY e.created_at DESC
+            LIMIT ?
+        ''', (usuario_id, limit))
+        uncategorized['extratos'] = [dict(row) for row in cur.fetchall()]
+        
+        # Cartões não categorizados
+        cur.execute('''
+            SELECT c.id, c.data, c.valor, c.tipo, c.descricao, c.categoria, c.cartao_nome
+            FROM cartoes c
+            LEFT JOIN ai_categorizations ac ON ac.transaction_type = 'cartao' AND ac.transaction_id = c.id
+            WHERE c.usuario_id = ? AND ac.id IS NULL
+            ORDER BY c.created_at DESC
+            LIMIT ?
+        ''', (usuario_id, limit))
+        uncategorized['cartoes'] = [dict(row) for row in cur.fetchall()]
+        
+        # Economias não categorizadas
+        cur.execute('''
+            SELECT ec.id, ec.data, ec.valor, ec.tipo, ec.descricao, ec.categoria
+            FROM economias ec
+            LEFT JOIN ai_categorizations ac ON ac.transaction_type = 'economia' AND ac.transaction_id = ec.id
+            WHERE ec.usuario_id = ? AND ac.id IS NULL
+            ORDER BY ec.created_at DESC
+            LIMIT ?
+        ''', (usuario_id, limit))
+        uncategorized['economias'] = [dict(row) for row in cur.fetchall()]
+        
+        return uncategorized
+        
+    except Exception as e:
+        print(f"Erro ao buscar transações não categorizadas: {e}")
+        return {'extratos': [], 'cartoes': [], 'economias': []}
+
+
+def save_ai_categorization(usuario_id: int, transaction_type: str, transaction_id: int, 
+                          original_description: str, original_category: str, 
+                          ai_category: str, ai_confidence: float = 0.8) -> bool:
+    """
+    Salva categorização feita pela IA no banco de dados
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute('''
+            INSERT OR REPLACE INTO ai_categorizations 
+            (usuario_id, transaction_type, transaction_id, original_description, 
+             original_category, ai_category, ai_confidence, processed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ''', (usuario_id, transaction_type, transaction_id, original_description, 
+              original_category, ai_category, ai_confidence))
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        print(f"Erro ao salvar categorização de IA: {e}")
+        return False
+
+
+def update_transaction_category(transaction_type: str, transaction_id: int, new_category: str) -> bool:
+    """
+    Atualiza a categoria de uma transação na tabela original
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        table_name = {
+            'extrato': 'extratos',
+            'cartao': 'cartoes', 
+            'economia': 'economias'
+        }.get(transaction_type)
+        
+        if not table_name:
+            return False
+            
+        cur.execute(f'''
+            UPDATE {table_name} 
+            SET categoria = ?, updated_at = datetime('now')
+            WHERE id = ?
+        ''', (new_category, transaction_id))
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        print(f"Erro ao atualizar categoria da transação: {e}")
+        return False
+
+
+def get_ai_categorization_stats(usuario_id: int) -> dict:
+    """
+    Retorna estatísticas das categorizações de IA para o usuário
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Total de transações categorizadas
+        cur.execute('''
+            SELECT COUNT(*) as total_categorized 
+            FROM ai_categorizations 
+            WHERE usuario_id = ?
+        ''', (usuario_id,))
+        total_categorized = cur.fetchone()['total_categorized']
+        
+        # Total de transações
+        cur.execute('''
+            SELECT 
+                (SELECT COUNT(*) FROM extratos WHERE usuario_id = ?) +
+                (SELECT COUNT(*) FROM cartoes WHERE usuario_id = ?) +
+                (SELECT COUNT(*) FROM economias WHERE usuario_id = ?) as total_transactions
+        ''', (usuario_id, usuario_id, usuario_id))
+        total_transactions = cur.fetchone()['total_transactions']
+        
+        # Categorias mais frequentes da IA
+        cur.execute('''
+            SELECT ai_category, COUNT(*) as count
+            FROM ai_categorizations 
+            WHERE usuario_id = ?
+            GROUP BY ai_category
+            ORDER BY count DESC
+            LIMIT 10
+        ''', (usuario_id,))
+        top_categories = [dict(row) for row in cur.fetchall()]
+        
+        return {
+            'total_categorized': total_categorized,
+            'total_transactions': total_transactions,
+            'categorization_percentage': (total_categorized / total_transactions * 100) if total_transactions > 0 else 0,
+            'top_categories': top_categories
+        }
+        
+    except Exception as e:
+        print(f"Erro ao obter estatísticas de categorização: {e}")
+        return {'total_categorized': 0, 'total_transactions': 0, 'categorization_percentage': 0, 'top_categories': []}
 

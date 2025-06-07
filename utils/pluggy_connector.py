@@ -7,10 +7,8 @@ import hashlib
 import pickle
 from pathlib import Path
 from dotenv import load_dotenv
-# from langchain_openai import ChatOpenAI
-# from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 from typing import Optional
-# from langchain_core.output_parsers.string import StrOutputParser
 import streamlit as st
 
 from database import get_connection
@@ -92,21 +90,30 @@ class PluggyConnector:
 
     def _init_llm(self):
         """Inicializar modelo LLM para uso em várias funcionalidades"""
-        # Temporarily disabled due to dependency issues
-        # load_dotenv()
-        # api_key = os.getenv("OPENAI_API_KEY")
-        # if api_key:
-        #     self.chat_model = ChatOpenAI(
-        #         model="gpt-4o-mini",
-        #         temperature=0,
-        #         max_completion_tokens=150,
-        #         top_p=1,
-        #         frequency_penalty=0,
-        #         presence_penalty=0,
-        #     )
-        # else:
-        #     self.chat_model = None
-        self.chat_model = None
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            # Buscar chave da OpenAI de forma robusta
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key or not api_key.startswith("sk-"):
+                self.chat_model = None
+                return
+            os.environ["OPENAI_API_KEY"] = api_key  # Garante que a lib OpenAI encontra a chave
+            from langchain_openai import ChatOpenAI
+            from pydantic import SecretStr
+            self.chat_model = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0.2,
+                max_completion_tokens=150,
+                api_key=SecretStr(api_key)
+            )
+            # Teste rápido do modelo
+            try:
+                _ = self.chat_model.invoke("Teste")
+            except Exception:
+                self.chat_model = None
+        except Exception:
+            self.chat_model = None
 
     def _load_persistent_cache(self):
         """Carregar cache persistente do disco"""
@@ -212,81 +219,72 @@ class PluggyConnector:
         if df.empty:
             return df
 
-        # Criar uma cópia para não modificar o original
-        df_temp = df.copy()
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.output_parsers.string import StrOutputParser
 
-        # Verificar se já existe coluna de categoria
+        df_temp = df.copy()
         if "Categoria" not in df_temp.columns:
             df_temp["Categoria"] = None
 
-        # Processar apenas as transações sem categoria definida (otimização)
         rows_to_process = df_temp[df_temp["Categoria"].isna()].copy()
         if rows_to_process.empty:
             return df_temp
 
-        # Processar transações em lotes para reduzir chamadas à API
-        batch_size = 20
+        batch_size = 10
         total_rows = len(rows_to_process)
+
+        # Prompt melhorado para categorias mais específicas
+        prompt = ChatPromptTemplate.from_template(
+            """
+            Analise a transação financeira brasileira abaixo e crie uma categoria ESPECÍFICA e DESCRITIVA baseada na descrição da transação. 
+
+            INSTRUÇÕES IMPORTANTES:
+            1. SEJA ESPECÍFICO: Em vez de "Transferência", use descrições como "Transferência João Silva", "Transferência Conta Poupança", "PIX Mercado"
+            2. EVITE GENÉRICOS: Em vez de "Outros", identifique o tipo real como "Farmácia", "Posto Gasolina", "Loja Roupas", etc.
+            3. USE A DESCRIÇÃO: Extraia informações úteis da descrição para criar categorias mais informativas
+            4. MANTENHA CONCISO: 2-4 palavras no máximo
+            5. CONTEXTO BRASILEIRO: Considere estabelecimentos, serviços e padrões brasileiros
+
+            EXEMPLOS:
+            - "PIX TRANSFERENCIA JOAO SILVA" → "PIX João Silva"
+            - "POSTO IPIRANGA" → "Posto Ipiranga"
+            - "MERCADO SAO VICENTE" → "Mercado São Vicente"
+            - "FARMACIA DROGA RAIA" → "Farmácia Droga Raia"
+            - "TRANSFERENCIA CONTA CORRENTE" → "Transferência Bancária"
+
+            Descrição: {descricao}
+            Valor: {valor}
+            Tipo: {tipo}
+            
+            Responda apenas com a categoria específica, sem explicações.
+            """
+        )
+        chain = None
+        if self.chat_model is not None:
+            chain = prompt | self.chat_model | StrOutputParser()
 
         for i in range(0, total_rows, batch_size):
             batch = rows_to_process.iloc[i:min(i+batch_size, total_rows)]
-
-            # Processar cada item do lote
             for idx, row in batch.iterrows():
                 descricao = str(row[coluna_descricao]) if not pd.isna(row[coluna_descricao]) else ""
                 valor = row[coluna_valor] if not pd.isna(row[coluna_valor]) else 0
                 tipo = row[coluna_tipo] if not pd.isna(row[coluna_tipo]) else ""
-
-                # Gerar chave de cache única
                 cache_key = self._get_hash(f"{descricao}_{valor}_{tipo}")
-
-                # Verificar cache antes de chamar a API
                 if cache_key in self._categorias_cache:
                     df_temp.loc[idx, "Categoria"] = self._categorias_cache[cache_key]
                     continue
-
-                # Se não está no cache, categorizar com IA
-                if self.chat_model is not None:
-                    # Temporarily disabled due to dependency issues
-                    # prompt = ChatPromptTemplate.from_template("""
-                    #     Categorize a transação abaixo em uma destas categorias exatas:
-                    #     Salário, Transferência, Alimentação, Transporte, Moradia, Saúde,
-                    #     Educação, Lazer, Vestuário, Outros.
-
-                    #     Responda APENAS com o nome da categoria, sem explicações.
-
-                    #     Descrição: {descricao}
-                    #     Valor: {valor}
-                    #     Tipo: {tipo}
-                    # """)
-
-                    # chain = prompt | self.chat_model | StrOutputParser()
+                if chain is not None:
                     try:
-                        # categoria = chain.invoke({"descricao": descricao, "valor": valor, "tipo": tipo}).strip()
-                        # Use simple categorization for now
-                        if "transferencia" in descricao.lower() or "pix" in descricao.lower():
-                            categoria = "Transferência"
-                        elif "salario" in descricao.lower():
-                            categoria = "Salário"
-                        else:
+                        categoria = chain.invoke({"descricao": descricao, "valor": valor, "tipo": tipo}).strip()
+                        if not categoria or len(categoria) > 30:
                             categoria = "Outros"
-                        
-                        # Validar categoria
-                        if categoria not in DEFAULT_CATEGORIES:
-                            categoria = "Outros"
-
-                        # Armazenar no cache
                         self._categorias_cache[cache_key] = categoria
                         df_temp.loc[idx, "Categoria"] = categoria
                     except Exception:
                         df_temp.loc[idx, "Categoria"] = "Outros"
                 else:
-                    # Se não há modelo LLM disponível, usar categoria padrão
                     df_temp.loc[idx, "Categoria"] = "Outros"
-
-            # Salvar cache a cada lote processado para não perder progresso
             self._save_persistent_cache()
-
         return df_temp
 
     def enriquecer_descricoes(self, df, coluna_descricao="Descrição"):

@@ -97,32 +97,53 @@ if not df_filtrado.empty:
                 # Ordenar por valor para melhor visualização
                 categoria_resumo = categoria_resumo.sort_values("ValorAbs", ascending=False)
                 
+                # Agrupar categorias pequenas em "Outros" se houver muitas categorias
+                if len(categoria_resumo) > 8:
+                    # Manter top 7 categorias e agrupar o resto em "Outros"
+                    top_categorias = categoria_resumo.head(7)
+                    outros_valor = categoria_resumo.tail(len(categoria_resumo) - 7)["ValorAbs"].sum()
+                    
+                    if outros_valor > 0:
+                        outros_row = pd.DataFrame({
+                            "Categoria": ["Outros"],
+                            "Valor": [0],  # Valor original não usado
+                            "ValorAbs": [outros_valor]
+                        })
+                        categoria_resumo = pd.concat([top_categorias, outros_row], ignore_index=True)
+                
                 fig = px.pie(categoria_resumo, 
                             names="Categoria", 
                             values="ValorAbs",
                             title="Por Categoria", 
                             template="plotly_white")
                 
-                # Configurações de layout consistentes
+                # Configurações de layout responsivo
                 fig.update_layout(
-                    height=350,
-                    font=dict(size=12),
+                    height=400,
+                    font=dict(size=11),
+                    showlegend=True,
                     legend=dict(
-                        orientation="v",
-                        yanchor="middle",
-                        y=0.5,
-                        xanchor="left",
-                        x=1.01
+                        orientation="h",  # Legenda horizontal
+                        yanchor="top",
+                        y=-0.1,
+                        xanchor="center",
+                        x=0.5,
+                        font=dict(size=10)
                     ),
-                    margin=dict(l=20, r=80, t=50, b=20)
+                    margin=dict(l=10, r=10, t=50, b=80),
+                    title=dict(
+                        x=0.5,
+                        font=dict(size=14)
+                    )
                 )
                 
                 # Configurações das fatias
                 fig.update_traces(
-                    textposition='inside',
-                    textinfo='percent+label',
+                    textposition='auto',
+                    textinfo='percent',
                     textfont_size=10,
-                    pull=[0.1 if name == "Outros" else 0 for name in categoria_resumo["Categoria"]]
+                    hovertemplate='<b>%{label}</b><br>Valor: R$ %{value:,.2f}<br>Percentual: %{percent}<extra></extra>',
+                    pull=[0.05 if name == "Outros" else 0 for name in categoria_resumo["Categoria"]]
                 )
                 
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
