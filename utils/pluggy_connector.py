@@ -238,7 +238,13 @@ class PluggyConnector:
             """
             Analise a transação financeira brasileira abaixo e crie uma categoria ESPECÍFICA e DESCRITIVA baseada na descrição da transação. 
 
-            INSTRUÇÕES IMPORTANTES:
+            REGRAS ESPECÍFICAS (PRIORIDADE MÁXIMA):
+            1. Se a descrição contém "Transferência Recebida|RICHARD PALMAS AYRES DA SILVA" ou valor acima de R$ 2.000,00: categorize como "Salário"
+            2. Se a descrição contém "Pagamento recebido": categorize como "Pagamento Cartão"
+            3. Se a descrição contém "MAGAZINE LUIZA 11007/10": categorize como "Pagamento Cartão"
+            4. Se a descrição contém "MP*ISRAEL": categorize como "Veículo"
+
+            INSTRUÇÕES GERAIS:
             1. SEJA ESPECÍFICO: Em vez de "Transferência", use descrições como "Transferência João Silva", "Transferência Conta Poupança", "PIX Mercado"
             2. EVITE GENÉRICOS: Em vez de "Outros", identifique o tipo real como "Farmácia", "Posto Gasolina", "Loja Roupas", etc.
             3. USE A DESCRIÇÃO: Extraia informações úteis da descrição para criar categorias mais informativas
@@ -251,6 +257,10 @@ class PluggyConnector:
             - "MERCADO SAO VICENTE" → "Mercado São Vicente"
             - "FARMACIA DROGA RAIA" → "Farmácia Droga Raia"
             - "TRANSFERENCIA CONTA CORRENTE" → "Transferência Bancária"
+            - "Transferência Recebida|RICHARD PALMAS AYRES DA SILVA" → "Salário"
+            - "Pagamento recebido" → "Pagamento Cartão"
+            - "MAGAZINE LUIZA 11007/10" → "Pagamento Cartão"
+            - "MP*ISRAEL COMBUSTIVEL" → "Veículo"
 
             Descrição: {descricao}
             Valor: {valor}
@@ -269,6 +279,34 @@ class PluggyConnector:
                 descricao = str(row[coluna_descricao]) if not pd.isna(row[coluna_descricao]) else ""
                 valor = row[coluna_valor] if not pd.isna(row[coluna_valor]) else 0
                 tipo = row[coluna_tipo] if not pd.isna(row[coluna_tipo]) else ""
+                
+                # Aplicar regras específicas antes do LLM
+                categoria_especifica = None
+                
+                # Regra 1: Transferência de salário específica ou valor alto
+                if ("Transferência Recebida|RICHARD PALMAS AYRES DA SILVA" in descricao or 
+                    (valor > 2000 and "Transferência" in descricao and valor > 0)):
+                    categoria_especifica = "Salário"
+                
+                # Regra 2: Pagamento recebido
+                elif "Pagamento recebido" in descricao:
+                    categoria_especifica = "Pagamento Cartão"
+                
+                # Regra 3: Magazine Luiza específica
+                elif "MAGAZINE LUIZA 11007/10" in descricao:
+                    categoria_especifica = "Pagamento Cartão"
+                
+                # Regra 4: MP*ISRAEL para veículo
+                elif "MP*ISRAEL" in descricao:
+                    categoria_especifica = "Veículo"
+                
+                # Se temos uma categoria específica, usar ela
+                if categoria_especifica:
+                    df_temp.loc[idx, "Categoria"] = categoria_especifica
+                    cache_key = self._get_hash(f"{descricao}_{valor}_{tipo}")
+                    self._categorias_cache[cache_key] = categoria_especifica
+                    continue
+                
                 cache_key = self._get_hash(f"{descricao}_{valor}_{tipo}")
                 if cache_key in self._categorias_cache:
                     df_temp.loc[idx, "Categoria"] = self._categorias_cache[cache_key]
@@ -862,25 +900,40 @@ class PluggyConnector:
         
         # Aplicar categorização básica por palavras-chave
         for idx, row in df_temp.iterrows():
-            descricao = str(row.get("Descrição", "")).lower()
+            descricao = str(row.get("Descrição", ""))
+            descricao_lower = descricao.lower()
             valor = row.get("Valor", 0)
             
-            # Categorização básica por palavras-chave
-            if any(word in descricao for word in ['salário', 'salario', 'vencimento', 'pagamento salario']):
+            # APLICAR REGRAS ESPECÍFICAS PRIMEIRO (PRIORIDADE MÁXIMA)
+            # Regra 1: Transferência de salário específica ou valor alto
+            if ("Transferência Recebida|RICHARD PALMAS AYRES DA SILVA" in descricao or 
+                (valor > 2000 and "Transferência" in descricao and valor > 0)):
                 df_temp.loc[idx, "Categoria"] = "Salário"
-            elif any(word in descricao for word in ['supermercado', 'mercado', 'alimentação', 'restaurante', 'ifood']):
+            # Regra 2: Pagamento recebido
+            elif "Pagamento recebido" in descricao:
+                df_temp.loc[idx, "Categoria"] = "Pagamento Cartão"
+            # Regra 3: Magazine Luiza específica
+            elif "MAGAZINE LUIZA 11007/10" in descricao:
+                df_temp.loc[idx, "Categoria"] = "Pagamento Cartão"
+            # Regra 4: MP*ISRAEL para veículo
+            elif "MP*ISRAEL" in descricao:
+                df_temp.loc[idx, "Categoria"] = "Veículo"
+            # Categorização básica por palavras-chave
+            elif any(word in descricao_lower for word in ['salário', 'salario', 'vencimento', 'pagamento salario']):
+                df_temp.loc[idx, "Categoria"] = "Salário"
+            elif any(word in descricao_lower for word in ['supermercado', 'mercado', 'alimentação', 'restaurante', 'ifood']):
                 df_temp.loc[idx, "Categoria"] = "Alimentação"
-            elif any(word in descricao for word in ['transferência', 'transferencia', 'pix', 'ted', 'doc']):
+            elif any(word in descricao_lower for word in ['transferência', 'transferencia', 'pix', 'ted', 'doc']):
                 df_temp.loc[idx, "Categoria"] = "Transferência"
-            elif any(word in descricao for word in ['transporte', 'uber', 'taxi', '99', 'combustível', 'gasolina']):
+            elif any(word in descricao_lower for word in ['transporte', 'uber', 'taxi', '99', 'combustível', 'gasolina']):
                 df_temp.loc[idx, "Categoria"] = "Transporte"
-            elif any(word in descricao for word in ['moradia', 'aluguel', 'condomínio', 'agua', 'luz', 'gas']):
+            elif any(word in descricao_lower for word in ['moradia', 'aluguel', 'condomínio', 'agua', 'luz', 'gas']):
                 df_temp.loc[idx, "Categoria"] = "Moradia"
-            elif any(word in descricao for word in ['saúde', 'hospital', 'médico', 'farmácia', 'remédio']):
+            elif any(word in descricao_lower for word in ['saúde', 'hospital', 'médico', 'farmácia', 'remédio']):
                 df_temp.loc[idx, "Categoria"] = "Saúde"
-            elif any(word in descricao for word in ['educação', 'escola', 'curso', 'livro']):
+            elif any(word in descricao_lower for word in ['educação', 'escola', 'curso', 'livro']):
                 df_temp.loc[idx, "Categoria"] = "Educação"
-            elif any(word in descricao for word in ['lazer', 'cinema', 'teatro', 'netflix', 'spotify']):
+            elif any(word in descricao_lower for word in ['lazer', 'cinema', 'teatro', 'netflix', 'spotify']):
                 df_temp.loc[idx, "Categoria"] = "Lazer"
             elif any(word in descricao for word in ['vestuário', 'roupa', 'calçado', 'shopping']):
                 df_temp.loc[idx, "Categoria"] = "Vestuário"

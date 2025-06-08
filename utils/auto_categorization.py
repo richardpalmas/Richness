@@ -305,8 +305,7 @@ class AutoCategorization:
                 'PIX': ['pix'],
                 'TED': ['ted'],
                 'DOC': ['doc'],
-                'Salario': ['salario', 'ordenado', 'vencimento'],
-                'Freelance': ['freelance', 'autonomo', 'consultor'],
+                'Salario': ['salario', 'ordenado', 'vencimento'],                'Freelance': ['freelance', 'autonomo', 'consultor'],
                 'Rendimento': ['rendimento', 'juros', 'dividendo', 'aplicacao']
             }
             
@@ -316,6 +315,24 @@ class AutoCategorization:
                 
                 descricao_lower = descricao.lower()
                 descricao_original = descricao.strip()
+                
+                # APLICAR REGRAS ESPECÍFICAS PRIMEIRO (PRIORIDADE MÁXIMA)
+                # Regra 1: Transferência de salário específica ou valor alto
+                if ("Transferência Recebida|RICHARD PALMAS AYRES DA SILVA" in descricao_original or 
+                    (valor > 2000 and "Transferência" in descricao_original and valor > 0)):
+                    return "Salário"
+                
+                # Regra 2: Pagamento recebido
+                if "Pagamento recebido" in descricao_original:
+                    return "Pagamento Cartão"
+                
+                # Regra 3: Magazine Luiza específica
+                if "MAGAZINE LUIZA 11007/10" in descricao_original:
+                    return "Pagamento Cartão"
+                
+                # Regra 4: MP*ISRAEL para veículo
+                if "MP*ISRAEL" in descricao_original:
+                    return "Veículo"
                 
                 # Verificar se é receita (valor positivo + palavras-chave)
                 if valor > 0:
