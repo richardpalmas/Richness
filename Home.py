@@ -679,6 +679,186 @@ col2.metric("Despesas", formatar_valor_monetario(abs(resumo['despesas'])))
 col3.metric("Saldo Líquido", formatar_valor_monetario(resumo['saldo_liquido']))
 col4.metric("Transações", resumo['total_transacoes'])
 
+# Seção de detalhamento das transações
+st.subheader("🔍 Detalhamento das Transações")
+
+# Obter dados detalhados do resumo financeiro
+resumo_detalhado = calcular_resumo_financeiro(df_filtrado)
+
+# Criar tabs para mostrar as categorias de transações
+tab1, tab2, tab3 = st.tabs(["💰 Receitas", "💸 Despesas", "🔄 Excluídas"])
+
+with tab1:
+    st.markdown("### Transações consideradas como **Receitas**")
+    
+    # Filtrar apenas as transações classificadas como receitas
+    indices_receitas = [idx for idx, val in resumo_detalhado.get('é_receita_real', {}).items() if val]
+    
+    if indices_receitas:
+        df_receitas = df_filtrado.loc[indices_receitas].copy()
+        df_receitas = df_receitas.sort_values('Data', ascending=False)
+        
+        # Formatação para exibição
+        df_receitas_display = formatar_df_monetario(df_receitas, "Valor")
+        
+        # Métricas das receitas
+        col_r1, col_r2, col_r3 = st.columns(3)
+        col_r1.metric("Total de Receitas", formatar_valor_monetario(df_receitas['Valor'].sum()))
+        col_r2.metric("Número de Transações", len(df_receitas))
+        col_r3.metric("Valor Médio", formatar_valor_monetario(df_receitas['Valor'].mean()))
+        
+        # Tabela das receitas
+        st.dataframe(
+            df_receitas_display[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
+                columns={"ValorFormatado": "Valor"}
+            ),
+            use_container_width=True,
+            height=300
+        )
+        
+        # Gráfico de receitas por categoria
+        if len(df_receitas) > 0 and 'Categoria' in df_receitas.columns:
+            receitas_por_categoria = df_receitas.groupby('Categoria')['Valor'].sum().reset_index()
+            receitas_por_categoria = receitas_por_categoria.sort_values('Valor', ascending=False)
+            
+            fig_receitas = px.bar(
+                receitas_por_categoria, 
+                x='Categoria', 
+                y='Valor',
+                title="Receitas por Categoria",
+                template="plotly_white",
+                color='Valor',
+                color_continuous_scale='Greens'
+            )
+            fig_receitas.update_layout(height=300, showlegend=False)
+            st.plotly_chart(fig_receitas, use_container_width=True)
+    else:
+        st.info("📊 Nenhuma transação foi classificada como receita no período selecionado.")
+
+with tab2:
+    st.markdown("### Transações consideradas como **Despesas**")
+    
+    # Filtrar apenas as transações classificadas como despesas
+    indices_despesas = [idx for idx, val in resumo_detalhado.get('é_despesa_real', {}).items() if val]
+    
+    if indices_despesas:
+        df_despesas = df_filtrado.loc[indices_despesas].copy()
+        df_despesas = df_despesas.sort_values('Data', ascending=False)
+        
+        # Formatação para exibição
+        df_despesas_display = formatar_df_monetario(df_despesas, "Valor")
+        
+        # Métricas das despesas
+        col_d1, col_d2, col_d3 = st.columns(3)
+        col_d1.metric("Total de Despesas", formatar_valor_monetario(abs(df_despesas['Valor'].sum())))
+        col_d2.metric("Número de Transações", len(df_despesas))
+        col_d3.metric("Valor Médio", formatar_valor_monetario(abs(df_despesas['Valor'].mean())))
+        
+        # Tabela das despesas
+        st.dataframe(
+            df_despesas_display[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
+                columns={"ValorFormatado": "Valor"}
+            ),
+            use_container_width=True,
+            height=300
+        )
+        
+        # Gráfico de despesas por categoria
+        if len(df_despesas) > 0 and 'Categoria' in df_despesas.columns:
+            despesas_por_categoria = df_despesas.groupby('Categoria')['Valor'].sum().reset_index()
+            despesas_por_categoria['Valor'] = despesas_por_categoria['Valor'].abs()  # Valores absolutos
+            despesas_por_categoria = despesas_por_categoria.sort_values('Valor', ascending=False)
+            
+            fig_despesas = px.bar(
+                despesas_por_categoria, 
+                x='Categoria', 
+                y='Valor',
+                title="Despesas por Categoria",
+                template="plotly_white",
+                color='Valor',
+                color_continuous_scale='Reds'
+            )
+            fig_despesas.update_layout(height=300, showlegend=False)
+            st.plotly_chart(fig_despesas, use_container_width=True)
+    else:
+        st.info("📊 Nenhuma transação foi classificada como despesa no período selecionado.")
+
+with tab3:
+    st.markdown("### Transações **Excluídas** dos cálculos")
+    st.caption("Transações internas, aplicações financeiras, pagamentos de cartão, etc.")
+    
+    # Filtrar transações que não são nem receitas nem despesas
+    indices_receitas = set(idx for idx, val in resumo_detalhado.get('é_receita_real', {}).items() if val)
+    indices_despesas = set(idx for idx, val in resumo_detalhado.get('é_despesa_real', {}).items() if val)
+    todos_indices = set(df_filtrado.index)
+    indices_excluidas = todos_indices - indices_receitas - indices_despesas
+    
+    if indices_excluidas:
+        df_excluidas = df_filtrado.loc[list(indices_excluidas)].copy()
+        df_excluidas = df_excluidas.sort_values('Data', ascending=False)
+        
+        # Formatação para exibição
+        df_excluidas_display = formatar_df_monetario(df_excluidas, "Valor")
+        
+        # Métricas das excluídas
+        col_e1, col_e2, col_e3 = st.columns(3)
+        col_e1.metric("Valor Total", formatar_valor_monetario(df_excluidas['Valor'].sum()))
+        col_e2.metric("Número de Transações", len(df_excluidas))
+        
+        # Calcular porcentagem do total
+        total_transacoes = len(df_filtrado)
+        percentual_excluidas = (len(df_excluidas) / total_transacoes * 100) if total_transacoes > 0 else 0
+        col_e3.metric("% do Total", f"{percentual_excluidas:.1f}%")
+        
+        # Explicação do motivo das exclusões
+        st.info("""
+        **Por que estas transações foram excluídas?**
+        
+        - 🔄 **Transferências internas**: Entre suas próprias contas
+        - 💳 **Pagamentos de cartão**: Evita contabilização dupla
+        - 💰 **Aplicações financeiras**: Apenas movimentação de patrimônio
+        - 🔍 **Transações sem classificação clara**: Aguardando mais informações
+        """)
+        
+        # Tabela das excluídas
+        st.dataframe(
+            df_excluidas_display[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
+                columns={"ValorFormatado": "Valor"}
+            ),
+            use_container_width=True,
+            height=300
+        )
+        
+        # Mostrar motivos de exclusão mais comuns
+        if len(df_excluidas) > 0:
+            # Analisar categorias mais comuns nas excluídas
+            if 'Categoria' in df_excluidas.columns:
+                categorias_excluidas = df_excluidas['Categoria'].value_counts().head(5)
+                
+                st.markdown("**Principais categorias excluídas:**")
+                for categoria, count in categorias_excluidas.items():
+                    st.markdown(f"- **{categoria}**: {count} transações")
+    else:
+        st.success("✅ Todas as transações do período foram classificadas como receitas ou despesas.")
+
+# Resumo da classificação
+st.markdown("---")
+st.markdown("### 📈 Resumo da Classificação")
+
+total_transacoes = len(df_filtrado)
+if total_transacoes > 0:
+    num_receitas = len([idx for idx, val in resumo_detalhado.get('é_receita_real', {}).items() if val])
+    num_despesas = len([idx for idx, val in resumo_detalhado.get('é_despesa_real', {}).items() if val])
+    num_excluidas = total_transacoes - num_receitas - num_despesas
+    
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    col_s1.metric("Total de Transações", total_transacoes)
+    col_s2.metric("Receitas", f"{num_receitas} ({num_receitas/total_transacoes*100:.1f}%)")
+    col_s3.metric("Despesas", f"{num_despesas} ({num_despesas/total_transacoes*100:.1f}%)")
+    col_s4.metric("Excluídas", f"{num_excluidas} ({num_excluidas/total_transacoes*100:.1f}%)")
+else:
+    st.info("Nenhuma transação encontrada no período selecionado.")
+
 # Visualizações essenciais
 if not df_filtrado.empty:
     col1, col2 = st.columns(2)
