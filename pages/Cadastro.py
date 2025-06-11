@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 from database import get_connection, create_tables
-from utils.config import PROFILE_PICS_DIR
 from security.auth.authentication import SecureAuthentication
 try:
     from security.auth.rate_limiter import RateLimiter as SecurityRateLimiter
@@ -33,6 +32,9 @@ st.set_page_config(page_title="Cadastro", layout="wide")
 
 # Aplicar segurança de cabeçalhos
 apply_page_security('public')
+
+# Definir diretório de fotos de perfil
+PROFILE_PICS_DIR = "profile_pics"
 
 # Criar diretório se não existir
 os.makedirs(PROFILE_PICS_DIR, exist_ok=True)

@@ -1146,50 +1146,217 @@ def update_transaction_category(transaction_type: str, transaction_id: int, new_
         return False
 
 
-def get_ai_categorization_stats(usuario_id: int) -> dict:
+def update_transaction_type(transaction_type: str, transaction_id: int, new_type: str) -> bool:
     """
-    Retorna estatísticas das categorizações de IA para o usuário
+    Atualiza o tipo de uma transação (Receita, Despesa, Excluído)
     """
     conn = get_connection()
     cur = conn.cursor()
     
     try:
-        # Total de transações categorizadas
-        cur.execute('''
-            SELECT COUNT(*) as total_categorized 
-            FROM ai_categorizations 
-            WHERE usuario_id = ?
-        ''', (usuario_id,))
-        total_categorized = cur.fetchone()['total_categorized']
+        table_name = {
+            'extrato': 'extratos',
+            'cartao': 'cartoes', 
+            'economia': 'economias'
+        }.get(transaction_type)
         
-        # Total de transações
-        cur.execute('''
-            SELECT 
-                (SELECT COUNT(*) FROM extratos WHERE usuario_id = ?) +
-                (SELECT COUNT(*) FROM cartoes WHERE usuario_id = ?) +
-                (SELECT COUNT(*) FROM economias WHERE usuario_id = ?) as total_transactions
-        ''', (usuario_id, usuario_id, usuario_id))
-        total_transactions = cur.fetchone()['total_transactions']
+        if not table_name:
+            return False
+            
+        cur.execute(f'''
+            UPDATE {table_name} 
+            SET tipo = ?, updated_at = datetime('now')
+            WHERE id = ?
+        ''', (new_type, transaction_id))
         
-        # Categorias mais frequentes da IA
-        cur.execute('''
-            SELECT ai_category, COUNT(*) as count
-            FROM ai_categorizations 
-            WHERE usuario_id = ?
-            GROUP BY ai_category
-            ORDER BY count DESC
-            LIMIT 10
-        ''', (usuario_id,))
-        top_categories = [dict(row) for row in cur.fetchall()]
-        
-        return {
-            'total_categorized': total_categorized,
-            'total_transactions': total_transactions,
-            'categorization_percentage': (total_categorized / total_transactions * 100) if total_transactions > 0 else 0,
-            'top_categories': top_categories
-        }
+        conn.commit()
+        return True
         
     except Exception as e:
-        print(f"Erro ao obter estatísticas de categorização: {e}")
-        return {'total_categorized': 0, 'total_transactions': 0, 'categorization_percentage': 0, 'top_categories': []}
+        print(f"Erro ao atualizar tipo da transação: {e}")
+        return False
+
+
+def delete_transaction(transaction_type: str, transaction_id: int, usuario_id: int) -> bool:
+    """
+    Remove uma transação específica do banco de dados
+    """
+    from security.audit.security_logger import SecurityLogger
+    logger = SecurityLogger()
+    
+    conn = get_connection()
+    cur = conn.cursor()
+    table_name = None
+    
+    try:
+        table_name = {
+            'extrato': 'extratos',
+            'cartao': 'cartoes', 
+            'economia': 'economias'
+        }.get(transaction_type)
+        
+        if not table_name:
+            return False
+        
+        # Verificar se a transação pertence ao usuário
+        cur.execute(f'SELECT usuario_id, descricao FROM {table_name} WHERE id = ?', (transaction_id,))
+        row = cur.fetchone()
+        
+        if not row or row['usuario_id'] != usuario_id:
+            return False
+        
+        # Log da operação de exclusão
+        logger.log_data_access(
+            username=f"user_{usuario_id}",
+            operation='transaction_deletion',
+            resource=f"{table_name}:{transaction_id}"
+        )
+        
+        # Remover transação
+        cur.execute(f'DELETE FROM {table_name} WHERE id = ? AND usuario_id = ?', (transaction_id, usuario_id))        # Remover categorizações de IA relacionadas
+        cur.execute('DELETE FROM ai_categorizations WHERE transaction_type = ? AND transaction_id = ?', 
+                   (transaction_type, transaction_id))
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        print(f"Erro ao deletar transação: {e}")
+        resource_name = f"{table_name}:{transaction_id}" if table_name else f"unknown_table:{transaction_id}"
+        logger.log_data_access(
+            username=f"user_{usuario_id}",
+            operation='transaction_deletion_failed',
+            resource=resource_name,
+            success=False
+        )
+        return False
+
+
+def get_transaction_details(transaction_type: str, transaction_id: int, usuario_id: int):
+    """
+    Obtém detalhes de uma transação específica
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        table_name = {
+            'extrato': 'extratos',
+            'cartao': 'cartoes', 
+            'economia': 'economias'
+        }.get(transaction_type)
+        
+        if not table_name:
+            return None
+            
+        cur.execute(f'''
+            SELECT * FROM {table_name} 
+            WHERE id = ? AND usuario_id = ?
+        ''', (transaction_id, usuario_id))
+        
+        row = cur.fetchone()
+        
+        if row:
+            return dict(row)
+        
+        return None
+        
+    except Exception as e:
+        print(f"Erro ao obter detalhes da transação: {e}")
+        return None
+
+
+def update_transaction_details(transaction_type: str, transaction_id: int, usuario_id: int, 
+                             new_category: Optional[str] = None, new_type: Optional[str] = None, 
+                             new_description: Optional[str] = None, new_value: Optional[float] = None) -> bool:
+    """
+    Atualiza múltiplos campos de uma transação
+    """
+    from security.audit.security_logger import SecurityLogger
+    logger = SecurityLogger()
+    
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    table_name = None
+    
+    try:
+        table_name = {
+            'extrato': 'extratos',
+            'cartao': 'cartoes', 
+            'economia': 'economias'
+        }.get(transaction_type)
+        
+        if not table_name:
+            return False
+        
+        # Verificar se a transação pertence ao usuário
+        cur.execute(f'SELECT usuario_id FROM {table_name} WHERE id = ?', (transaction_id,))
+        row = cur.fetchone()
+        
+        if not row or row['usuario_id'] != usuario_id:
+            return False
+        
+        # Construir query de update dinamicamente
+        update_fields = []
+        update_values = []
+        
+        if new_category is not None:
+            update_fields.append('categoria = ?')
+            update_values.append(new_category)
+            
+        if new_type is not None:
+            update_fields.append('tipo = ?')
+            update_values.append(new_type)
+            
+        if new_description is not None:
+            update_fields.append('descricao = ?')
+            update_values.append(new_description)
+            
+        if new_value is not None:
+            update_fields.append('valor = ?')
+            update_values.append(new_value)
+        
+        if not update_fields:
+            return True  # Nada para atualizar
+          # Adicionar campo updated_at
+        update_fields.append('updated_at = datetime("now")')
+        update_values.append(transaction_id)
+        update_values.append(usuario_id)
+        
+        query = f'''
+            UPDATE {table_name} 
+            SET {', '.join(update_fields)}
+            WHERE id = ? AND usuario_id = ?
+        '''
+        
+        cur.execute(query, update_values)
+        
+        # Log da operação de edição
+        changes = {
+            'categoria': new_category,
+            'tipo': new_type,
+            'descricao': new_description,
+            'valor': new_value
+        }
+        changes = {k: v for k, v in changes.items() if v is not None}
+        logger.log_data_access(
+            username=f"user_{usuario_id}",
+            operation='transaction_update',
+            resource=f"{table_name}:{transaction_id}"
+        )
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        print(f"Erro ao atualizar transação: {e}")
+        resource_name = f"{table_name}:{transaction_id}" if table_name else f"unknown_table:{transaction_id}"
+        logger.log_data_access(
+            username=f"user_{usuario_id}",
+            operation='transaction_update_failed',
+            resource=resource_name,
+            success=False
+        )
+        return False
 

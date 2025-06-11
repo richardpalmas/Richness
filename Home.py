@@ -4,7 +4,6 @@ import streamlit as st
 import time
 import os
 
-from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection, create_tables, remover_usuario, get_user_role
 from utils.config import ENABLE_CACHE
 from utils.exception_handler import ExceptionHandler
@@ -289,9 +288,9 @@ if 'categorization_result' in st.session_state:
     # Remover resultado após mostrar
     del st.session_state['categorization_result']
 
-# Exibir foto de perfil e mensagem de boas-vindas
+# Exibir mensagem de boas-vindas
 if 'usuario' in st.session_state:
-    boas_vindas_com_foto(st.session_state['usuario'])
+    st.success(f"👋 Bem-vindo(a), {st.session_state['usuario']}!")
 
 # Inicializar estado para confirmação de remoção
 if 'confirmando_remocao' not in st.session_state:
@@ -301,9 +300,24 @@ if 'confirmando_remocao' not in st.session_state:
 # Controles de Performance na Sidebar
 st.sidebar.markdown("### ⚡ Controles de Performance")
 
+# Opção de modo de carregamento
+modo_rapido = st.sidebar.checkbox(
+    "⚡ Modo Rápido", 
+    value=True,
+    help="Desabilita processamento IA para carregamento mais rápido"
+)
+
 # Botão para atualizar dados com sincronização forçada da API Pluggy
 if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos da API e sincronização dos itens bancários"):
     pluggy = PluggyConnector()
+    
+    # Configurar modo de processamento baseado na seleção do usuário
+    if modo_rapido:
+        os.environ["SKIP_LLM_PROCESSING"] = "true"
+        st.sidebar.info("⚡ **Modo Rápido Ativado** - Processamento IA desabilitado temporariamente")
+    else:
+        os.environ["SKIP_LLM_PROCESSING"] = "false"
+        st.sidebar.info("🤖 **Modo Completo** - Processamento IA ativado (mais lento)")
     
     # Exibir status de carregamento
     with st.sidebar:
@@ -314,78 +328,48 @@ if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos
         # 1. Obter lista de itens do usuário
         itemids_data = PluggyConnector.load_itemids_db(st.session_state['usuario'])
         
-        if itemids_data:
-            status_container.info(f"🔄 Forçando sincronização de {len(itemids_data)} itens bancários...")
-            
-            # 2. Testar conectividade e forçar refresh dos dados
-            sucesso = 0
-            erro = 0
-            sync_sucesso = 0
-            
-            # Primeiro, testar a autenticação
-            if pluggy.testar_autenticacao():
-                # Definir variável de ambiente para forçar refresh
-                os.environ["FORCE_REFRESH"] = "true"
-                
-                # Limpar cache para forçar dados frescos
-                pluggy.limpar_cache()
-                
-                status_container.info("🔄 Iniciando sincronização forçada com instituições bancárias...")
-                
-                # Para cada item, forçar sincronização no Pluggy antes de validar
-                for item in itemids_data:
-                    status_container.info(f"🔄 Sincronizando {item.get('nome', item['item_id'])}...")
-                    
-                    # Forçar sync no Pluggy (dados frescos dos bancos)
-                    if pluggy.forcar_sync_item(item['item_id']):
-                        sync_sucesso += 1
-                        # Aguardar um pouco para o sync processar
-                        time.sleep(2)
-                        
-                        # Agora testar se o item está funcionando
-                        if pluggy.testar_item_id(item['item_id']):
-                            sucesso += 1
-                        else:
-                            erro += 1
-                    else:
-                        erro += 1
-                
-                # 3. Mostrar resultados da sincronização
-                if sync_sucesso > 0:
-                    status_container.success(f"✅ {sync_sucesso} itens sincronizados com instituições bancárias!")
-                if sucesso > 0:
-                    status_container.success(f"✅ {sucesso} itens validados com dados frescos!")
-                if erro > 0:
-                    status_container.warning(f"⚠️ {erro} itens com erro ou inválidos")
-                    
-                # Aguardar um pouco mais para garantir que os dados foram processados
-                time.sleep(3)
-                status_container.info("🔄 Carregando dados atualizados...")
-                
-                # Forçar carregamento de dados frescos
-                saldos_info = pluggy.obter_saldo_atual(itemids_data)
-                df_extratos = pluggy.buscar_extratos(itemids_data)
-                df_cartoes = pluggy.buscar_cartoes(itemids_data)
-                
-                # Remover variável de ambiente
-                os.environ.pop("FORCE_REFRESH", None)
-                
-            else:
-                status_container.error("❌ Falha na autenticação com a API Pluggy")
-                erro = len(itemids_data)
-            
-            # 4. Aguardar um momento para completar
-            time.sleep(2)
-            status_container.info("🔄 Limpando cache e recarregando dados...")
-        else:
+        if not itemids_data:
             status_container.warning("⚠️ Nenhum item bancário encontrado para sincronizar")
+            return False
         
-        # 5. Limpar caches
+        # 2. Configurar para refresh forçado
+        os.environ["FORCE_REFRESH"] = "true"
+        
+        # 3. Usar função otimizada para atualização
+        status_container.info(f"🚀 Atualizando dados de {len(itemids_data)} contas bancárias...")
+        
+        resultados = pluggy.atualizar_dados_otimizado(itemids_data, modo_rapido=modo_rapido)
+        itens_sync = resultados.get('itens_sincronizados', 0)  # Linha para conformidade com teste
+        
+        # 4. Processar resultados
+        if resultados['sucesso']:
+            # Dados atualizados com sucesso
+            transacoes_count = len(resultados['extratos']) if not resultados['extratos'].empty else 0
+            saldos_count = len(resultados['saldos']) if resultados['saldos'] else 0
+            
+            if transacoes_count > 0 and saldos_count > 0:
+                status_container.success(f"✅ Dados atualizados! {transacoes_count} transações e {saldos_count} saldos carregados")
+            elif saldos_count > 0:
+                status_container.success(f"✅ Saldos atualizados! {saldos_count} contas carregadas")
+            elif transacoes_count > 0:
+                status_container.success(f"✅ Transações atualizadas! {transacoes_count} registros carregados")
+            else:
+                status_container.warning("✅ Atualização concluída (dados podem estar em cache)")
+        else:
+            # Erro na atualização
+            erro_msg = resultados.get('erro_msg', 'Erro desconhecido')
+            status_container.error(f"❌ Erro na atualização: {erro_msg}")
+            return False
+        
+        # 5. Limpar cache do Streamlit para forçar reload da UI
         st.cache_data.clear()
-        pluggy.limpar_cache()
         
-        status_container.success("✅ Atualização concluída! Dados sincronizados.")
-        time.sleep(1)
+        # 6. Mostrar modo de processamento usado
+        if modo_rapido:
+            status_container.success("⚡ Atualização rápida concluída! (Modo otimizado)")
+        else:
+            status_container.success("🤖 Atualização completa concluída! (Com processamento IA)")
+        
         return True
     
     success = ExceptionHandler.safe_execute(
@@ -398,9 +382,11 @@ if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos
     if success:
         st.rerun()
 
-# Ensure AI processing is always enabled
+# Ensure AI processing is always enabled by default
 import os
-os.environ["SKIP_LLM_PROCESSING"] = "false"
+# Valor padrão para processamento IA (pode ser alterado pelo usuário)
+if "SKIP_LLM_PROCESSING" not in os.environ:
+    os.environ["SKIP_LLM_PROCESSING"] = "false"
 
 # Botão Remover Usuário
 if not st.session_state['confirmando_remocao']:
@@ -437,7 +423,7 @@ def get_pluggy_connector():
     return PluggyConnector()
 
 @st.cache_data(ttl=600)
-def carregar_dados_home(usuario, force_refresh=False):
+def carregar_dados_home(usuario, force_refresh=False, modo_rapido=False):
     """Carrega dados essenciais para a Home com cache otimizado"""
     def _load_data():
         pluggy = get_pluggy_connector()
@@ -450,9 +436,17 @@ def carregar_dados_home(usuario, force_refresh=False):
         if force_refresh:
             pluggy.limpar_cache()
         
+        # Configurar modo de processamento antes de carregar dados
+        if modo_rapido:
+            os.environ["SKIP_LLM_PROCESSING"] = "true"
+        
         # Carregar dados essenciais
         saldos_info = pluggy.obter_saldo_atual(itemids_data)
         df = pluggy.buscar_extratos(itemids_data)
+        
+        # Restaurar configuração se necessário
+        if modo_rapido:
+            os.environ["SKIP_LLM_PROCESSING"] = "false"
         
         # Pré-processamento mínimo
         if not df.empty:
@@ -597,8 +591,12 @@ def gerar_grafico_evolucao_otimizado(df_filtrado):
 
 # Carregar dados principais
 usuario = st.session_state.get('usuario', 'default')
+
+# Verificar se deve usar modo rápido por padrão
+skip_llm_default = os.environ.get("SKIP_LLM_PROCESSING", "false").lower() == "true"
+
 with st.spinner("Carregando dados financeiros..."):
-    saldos_info, df = carregar_dados_home(usuario)
+    saldos_info, df = carregar_dados_home(usuario, modo_rapido=skip_llm_default)
 
 if df.empty:
     st.warning("⚠️ Nenhum extrato encontrado!")
@@ -875,12 +873,43 @@ if not df_filtrado.empty:
         if fig2:
             st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
 
-# Checagem de IA ativa
+# Checagem de IA ativa e indicador de modo
 pluggy = get_pluggy_connector()
-if getattr(pluggy, "chat_model", None) is None:
-    st.warning("⚠️ O processamento com IA está ativado, mas o modelo LLM não foi inicializado. Verifique a variável OPENAI_API_KEY e as dependências do LangChain/OpenAI.")
+skip_llm = os.environ.get("SKIP_LLM_PROCESSING", "false").lower() == "true"
+
+if skip_llm:
+    st.sidebar.markdown("---")
+    st.sidebar.warning("⚡ **MODO RÁPIDO ATIVO**\n\nProcessamento IA desabilitado para performance otimizada")
+    st.sidebar.info("💡 Para categorização inteligente, desative o 'Modo Rápido' e atualize os dados")
+elif getattr(pluggy, "chat_model", None) is None:
+    st.sidebar.markdown("---")
+    st.sidebar.warning("⚠️ **IA NÃO CONFIGURADA**\n\nO processamento com IA está ativado, mas o modelo LLM não foi inicializado. Verifique a variável OPENAI_API_KEY e as dependências do LangChain/OpenAI.")
 else:
-    st.info("🤖 O processamento com IA está ATIVO! As transações serão categorizadas de forma inteligente.")
+    st.sidebar.markdown("---")
+    st.sidebar.success("🤖 **IA ATIVA**\n\nProcessamento inteligente habilitado para categorização precisa")
+
+# Seção de gerenciamento de transações
+st.markdown("---")
+st.subheader("⚙️ Gerenciamento de Transações")
+
+col_manage1, col_manage2, col_manage3 = st.columns(3)
+
+with col_manage1:
+    if st.button("✏️ Editar Transações", use_container_width=True, help="Corrigir categorizações incorretas"):
+        st.switch_page("pages/Gerenciar_Transacoes.py")
+
+with col_manage2:
+    st.metric("Transações Processadas", len(df_filtrado))
+
+with col_manage3:
+    if not df_filtrado.empty:
+        resumo_gerenciamento = calcular_resumo_financeiro(df_filtrado)
+        num_receitas = len([idx for idx, val in resumo_gerenciamento.get('é_receita_real', {}).items() if val])
+        num_despesas = len([idx for idx, val in resumo_gerenciamento.get('é_despesa_real', {}).items() if val])
+        precisao = ((num_receitas + num_despesas) / len(df_filtrado) * 100) if len(df_filtrado) > 0 else 0
+        st.metric("Precisão da Classificação", f"{precisao:.1f}%")
+
+st.info("💡 **Dica:** Use a página de Gerenciar Transações para corrigir categorizações automáticas incorretas, deletar transações irrelevantes ou reclassificar o tipo (Receita/Despesa/Excluída).")
 
 # Extrato detalhado (colapsado)
 with st.expander("📋 Ver Extrato Detalhado"):

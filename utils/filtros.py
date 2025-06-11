@@ -33,8 +33,10 @@ def filtro_data(df, key_prefix="default"):
     if isinstance(selected_period, tuple):
         if len(selected_period) == 2:
             start_date, end_date = selected_period
-        else:
+        elif len(selected_period) == 1:
             start_date = end_date = selected_period[0]
+        else:
+            start_date = end_date = date.today()
     else:
         start_date = end_date = selected_period
 

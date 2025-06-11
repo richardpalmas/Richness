@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Página de Dicas Financeiras com IA - Versão Corrigida
 Implementa conexão robusta com LangChain e OpenAI
