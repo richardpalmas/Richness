@@ -4,7 +4,6 @@ import plotly.express as px
 from datetime import date, timedelta
 from dotenv import load_dotenv
 
-from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection
 from utils.auth import verificar_autenticacao
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
@@ -19,9 +18,9 @@ st.set_page_config(page_title="Cartão de Crédito", layout="wide")
 verificar_autenticacao()
 usuario = st.session_state.get('usuario', 'default')
 
-# Exibição de foto de perfil e mensagem de boas-vindas
+# Mensagem de boas-vindas
 if usuario:
-    boas_vindas_com_foto(usuario)
+    st.success(f"👋 Bem-vindo(a), {usuario}!")
 
 st.title("💳 Cartão de Crédito")
 

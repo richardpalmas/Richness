@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 # Importações dos módulos do projeto
 try:
     from utils.environment_config import get_config, validate_openai_key
-    from componentes.profile_pic_component import boas_vindas_com_foto
     from utils.auth import verificar_autenticacao
     from utils.formatacao import formatar_valor_monetario
     from utils.pluggy_connector import PluggyConnector
@@ -271,13 +270,12 @@ def get_financial_data(user_id: str) -> Dict[str, Any]:
 
 def main():
     """Função principal da aplicação"""
-    
-    # Verificar autenticação
+      # Verificar autenticação
     verificar_autenticacao()
     
-    # Componente de boas-vindas
+    # Mensagem de boas-vindas
     usuario = st.session_state.get('usuario', 'default')
-    boas_vindas_com_foto(usuario)
+    st.success(f"👋 Bem-vindo(a), {usuario}!")
     
     # Título principal
     st.title("💡 Dicas Financeiras com IA")

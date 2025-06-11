@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from componentes.profile_pic_component import boas_vindas_com_foto
 from utils.pluggy_connector import PluggyConnector
 from utils.auth import verificar_autenticacao
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
@@ -13,9 +12,9 @@ st.set_page_config(layout="wide")
 # Verificar autenticação
 verificar_autenticacao()
 
-# Exibir foto de perfil
+# Mensagem de boas-vindas
 if 'usuario' in st.session_state:
-    boas_vindas_com_foto(st.session_state['usuario'])
+    st.success(f"👋 Bem-vindo(a), {st.session_state['usuario']}!")
 
 st.title("💰 Minhas Economias")
 
