@@ -1,4 +1,5 @@
 import streamlit as st
+from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection, get_usuario_por_nome
 from utils.auth import verificar_autenticacao
 from utils.pluggy_connector import PluggyConnector
@@ -10,9 +11,9 @@ st.set_page_config(page_title="Pluggy - Conexões", layout="wide")
 verificar_autenticacao()
 usuario = st.session_state.get('usuario', 'default')
 
-# Mensagem de boas-vindas
+# Boas-vindas otimizada
 if usuario:
-    st.success(f"👋 Bem-vindo(a), {usuario}!")
+    boas_vindas_com_foto(usuario)
 
 st.title("🔗 Conexões Pluggy")
 
@@ -128,7 +129,7 @@ if items:
                 with st.spinner("Testando item ID..."):
                     def _test_item():
                         resultado = pluggy.obter_saldo_atual([(item['item_id'], item['nome'])])
-                        if resultado is not None and len(resultado) >= 4:
+                        if resultado and len(resultado) >= 4:
                             return "✅ Item ID válido!"
                         else:
                             return "❌ Item ID inválido ou sem dados"

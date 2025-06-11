@@ -163,30 +163,3 @@ scripts/teste_historico/**
 
 # others
 auto-continue.js
-
-# === RICHNESS PROJECT - SPECIFIC RULES ===
-# Arquivos específicos do projeto Richness
-richness.db
-.encryption_key
-.session_key
-cache/
-logs/
-profile_pics/
-backups/
-
-# Arquivos temporários do projeto
-*.tmp
-*.temp
-cleanup_temp/
-*_backup/
-*_old/
-
-# Documentos markdown de histórico/temporários
-*_CONCLUIDA.md
-*_FINAL.md
-CORRECAO_*.md
-LIMPEZA_*.md
-VERIFICACAO_*.md
-RELATORIO_*.md
-STATUS_*.md
-RESUMO_*.md

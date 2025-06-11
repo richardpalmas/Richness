@@ -4,6 +4,7 @@ import streamlit as st
 import time
 import os
 
+from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection, create_tables, remover_usuario, get_user_role
 from utils.config import ENABLE_CACHE
 from utils.exception_handler import ExceptionHandler
@@ -117,18 +118,6 @@ def secure_authenticate_user(usuario_input: str, senha_input: str) -> tuple[bool
             # Garantir que richardpalmas sempre tenha role de admin
             if user_data['usuario'] == 'richardpalmas' and user_role != 'admin':
                 st.session_state['user_role'] = 'admin'
-            
-            # Executar categorização automática em background
-            try:
-                from utils.auto_categorization import run_auto_categorization_on_login
-                categorization_result = run_auto_categorization_on_login(user_data['id'])
-                
-                # Armazenar resultado para mostrar notificação
-                st.session_state['categorization_result'] = categorization_result
-                
-            except Exception as e:
-                print(f"Erro na categorização automática: {e}")
-                # Não falha o login se a categorização der erro
             
             return True, "✅ Login realizado com sucesso!"
         else:
@@ -263,61 +252,24 @@ if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação"):
     st.session_state['usuario'] = ''
     st.rerun()
 
-# Mostrar notificação de categorização automática melhorada
-if 'categorization_result' in st.session_state:
-    cat_result = st.session_state['categorization_result']
-    
-    if cat_result['success']:
-        if cat_result['ai_available']:
-            if cat_result['processed_count'] > 0:
-                st.sidebar.success(f"✨ IA categorizou {cat_result['processed_count']} novas transações com categorias específicas")
-            else:
-                st.sidebar.info("✅ Todas as transações já estão categorizadas")
-        else:
-            if cat_result['fallback_count'] > 0:
-                st.sidebar.warning(f"🔧 **Modo Fallback Ativo**\n\n"
-                                 f"📋 {cat_result['fallback_count']} transações categorizadas automaticamente\n\n"
-                                 f"ℹ️ **Sistema de backup em uso** - Categorias mais específicas disponíveis com IA configurada")
-                st.sidebar.info("💡 **Dica**: Configure a IA nos parâmetros do sistema para categorias ainda mais precisas")
-            else:
-                st.sidebar.info("✅ Todas as transações já estão categorizadas")
-    else:
-        if cat_result['error_count'] > 0:
-            st.sidebar.error("❌ Erro na categorização automática - Verifique os logs do sistema")
-    
-    # Remover resultado após mostrar
-    del st.session_state['categorization_result']
-
-# Exibir mensagem de boas-vindas
+# Exibir foto de perfil e mensagem de boas-vindas
 if 'usuario' in st.session_state:
-    st.success(f"👋 Bem-vindo(a), {st.session_state['usuario']}!")
+    boas_vindas_com_foto(st.session_state['usuario'])
 
 # Inicializar estado para confirmação de remoção
 if 'confirmando_remocao' not in st.session_state:
     st.session_state['confirmando_remocao'] = False
 
 # Inicializar estado para modo de carregamento
+if 'carregamento_rapido' not in st.session_state:
+    st.session_state['carregamento_rapido'] = True  # Padrão: carregamento rápido
+
 # Controles de Performance na Sidebar
 st.sidebar.markdown("### ⚡ Controles de Performance")
-
-# Opção de modo de carregamento
-modo_rapido = st.sidebar.checkbox(
-    "⚡ Modo Rápido", 
-    value=True,
-    help="Desabilita processamento IA para carregamento mais rápido"
-)
 
 # Botão para atualizar dados com sincronização forçada da API Pluggy
 if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos da API e sincronização dos itens bancários"):
     pluggy = PluggyConnector()
-    
-    # Configurar modo de processamento baseado na seleção do usuário
-    if modo_rapido:
-        os.environ["SKIP_LLM_PROCESSING"] = "true"
-        st.sidebar.info("⚡ **Modo Rápido Ativado** - Processamento IA desabilitado temporariamente")
-    else:
-        os.environ["SKIP_LLM_PROCESSING"] = "false"
-        st.sidebar.info("🤖 **Modo Completo** - Processamento IA ativado (mais lento)")
     
     # Exibir status de carregamento
     with st.sidebar:
@@ -328,48 +280,78 @@ if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos
         # 1. Obter lista de itens do usuário
         itemids_data = PluggyConnector.load_itemids_db(st.session_state['usuario'])
         
-        if not itemids_data:
-            status_container.warning("⚠️ Nenhum item bancário encontrado para sincronizar")
-            return False
-        
-        # 2. Configurar para refresh forçado
-        os.environ["FORCE_REFRESH"] = "true"
-        
-        # 3. Usar função otimizada para atualização
-        status_container.info(f"🚀 Atualizando dados de {len(itemids_data)} contas bancárias...")
-        
-        resultados = pluggy.atualizar_dados_otimizado(itemids_data, modo_rapido=modo_rapido)
-        itens_sync = resultados.get('itens_sincronizados', 0)  # Linha para conformidade com teste
-        
-        # 4. Processar resultados
-        if resultados['sucesso']:
-            # Dados atualizados com sucesso
-            transacoes_count = len(resultados['extratos']) if not resultados['extratos'].empty else 0
-            saldos_count = len(resultados['saldos']) if resultados['saldos'] else 0
+        if itemids_data:
+            status_container.info(f"🔄 Forçando sincronização de {len(itemids_data)} itens bancários...")
             
-            if transacoes_count > 0 and saldos_count > 0:
-                status_container.success(f"✅ Dados atualizados! {transacoes_count} transações e {saldos_count} saldos carregados")
-            elif saldos_count > 0:
-                status_container.success(f"✅ Saldos atualizados! {saldos_count} contas carregadas")
-            elif transacoes_count > 0:
-                status_container.success(f"✅ Transações atualizadas! {transacoes_count} registros carregados")
+            # 2. Testar conectividade e forçar refresh dos dados
+            sucesso = 0
+            erro = 0
+            sync_sucesso = 0
+            
+            # Primeiro, testar a autenticação
+            if pluggy.testar_autenticacao():
+                # Definir variável de ambiente para forçar refresh
+                os.environ["FORCE_REFRESH"] = "true"
+                
+                # Limpar cache para forçar dados frescos
+                pluggy.limpar_cache()
+                
+                status_container.info("🔄 Iniciando sincronização forçada com instituições bancárias...")
+                
+                # Para cada item, forçar sincronização no Pluggy antes de validar
+                for item in itemids_data:
+                    status_container.info(f"🔄 Sincronizando {item.get('nome', item['item_id'])}...")
+                    
+                    # Forçar sync no Pluggy (dados frescos dos bancos)
+                    if pluggy.forcar_sync_item(item['item_id']):
+                        sync_sucesso += 1
+                        # Aguardar um pouco para o sync processar
+                        time.sleep(2)
+                        
+                        # Agora testar se o item está funcionando
+                        if pluggy.testar_item_id(item['item_id']):
+                            sucesso += 1
+                        else:
+                            erro += 1
+                    else:
+                        erro += 1
+                
+                # 3. Mostrar resultados da sincronização
+                if sync_sucesso > 0:
+                    status_container.success(f"✅ {sync_sucesso} itens sincronizados com instituições bancárias!")
+                if sucesso > 0:
+                    status_container.success(f"✅ {sucesso} itens validados com dados frescos!")
+                if erro > 0:
+                    status_container.warning(f"⚠️ {erro} itens com erro ou inválidos")
+                    
+                # Aguardar um pouco mais para garantir que os dados foram processados
+                time.sleep(3)
+                status_container.info("🔄 Carregando dados atualizados...")
+                
+                # Forçar carregamento de dados frescos
+                saldos_info = pluggy.obter_saldo_atual(itemids_data)
+                df_extratos = pluggy.buscar_extratos(itemids_data)
+                df_cartoes = pluggy.buscar_cartoes(itemids_data)
+                
+                # Remover variável de ambiente
+                os.environ.pop("FORCE_REFRESH", None)
+                
             else:
-                status_container.warning("✅ Atualização concluída (dados podem estar em cache)")
+                status_container.error("❌ Falha na autenticação com a API Pluggy")
+                erro = len(itemids_data)
+            
+            # 4. Aguardar um momento para completar
+            time.sleep(2)
+            status_container.info("🔄 Limpando cache e recarregando dados...")
         else:
-            # Erro na atualização
-            erro_msg = resultados.get('erro_msg', 'Erro desconhecido')
-            status_container.error(f"❌ Erro na atualização: {erro_msg}")
-            return False
+            status_container.warning("⚠️ Nenhum item bancário encontrado para sincronizar")
         
-        # 5. Limpar cache do Streamlit para forçar reload da UI
+        # 5. Limpar caches
         st.cache_data.clear()
+        pluggy.limpar_cache()
         
-        # 6. Mostrar modo de processamento usado
-        if modo_rapido:
-            status_container.success("⚡ Atualização rápida concluída! (Modo otimizado)")
-        else:
-            status_container.success("🤖 Atualização completa concluída! (Com processamento IA)")
-        
+        status_container.success("✅ Atualização concluída! Dados sincronizados.")
+        time.sleep(1)
         return True
     
     success = ExceptionHandler.safe_execute(
@@ -382,11 +364,27 @@ if st.sidebar.button("🔄 Atualizar Dados", help="Força busca de dados frescos
     if success:
         st.rerun()
 
-# Ensure AI processing is always enabled by default
+carregamento_rapido = st.sidebar.checkbox(
+    "Carregamento Rápido (sem IA)", 
+    value=st.session_state.get('carregamento_rapido', True),
+    help="Desabilita processamento de IA para carregamento mais rápido. Use 'Processar com IA' depois para categorização completa."
+)
+
+# Atualizar variável de ambiente com base na escolha
 import os
-# Valor padrão para processamento IA (pode ser alterado pelo usuário)
-if "SKIP_LLM_PROCESSING" not in os.environ:
-    os.environ["SKIP_LLM_PROCESSING"] = "false"
+os.environ["SKIP_LLM_PROCESSING"] = "true" if carregamento_rapido else "false"
+st.session_state['carregamento_rapido'] = carregamento_rapido
+
+# Botão para processar com IA após carregamento rápido
+if carregamento_rapido:
+    if st.sidebar.button("🤖 Processar com IA", help="Aplica categorização e enriquecimento de IA aos dados já carregados"):
+        # Limpar cache para forçar reprocessamento com IA
+        pluggy = PluggyConnector()
+        pluggy.limpar_cache()
+        os.environ["SKIP_LLM_PROCESSING"] = "false"
+        st.cache_data.clear()
+        st.sidebar.success("Processamento com IA concluído!")
+        st.rerun()
 
 # Botão Remover Usuário
 if not st.session_state['confirmando_remocao']:
@@ -423,7 +421,7 @@ def get_pluggy_connector():
     return PluggyConnector()
 
 @st.cache_data(ttl=600)
-def carregar_dados_home(usuario, force_refresh=False, modo_rapido=False):
+def carregar_dados_home(usuario, force_refresh=False):
     """Carrega dados essenciais para a Home com cache otimizado"""
     def _load_data():
         pluggy = get_pluggy_connector()
@@ -436,17 +434,9 @@ def carregar_dados_home(usuario, force_refresh=False, modo_rapido=False):
         if force_refresh:
             pluggy.limpar_cache()
         
-        # Configurar modo de processamento antes de carregar dados
-        if modo_rapido:
-            os.environ["SKIP_LLM_PROCESSING"] = "true"
-        
         # Carregar dados essenciais
         saldos_info = pluggy.obter_saldo_atual(itemids_data)
         df = pluggy.buscar_extratos(itemids_data)
-        
-        # Restaurar configuração se necessário
-        if modo_rapido:
-            os.environ["SKIP_LLM_PROCESSING"] = "false"
         
         # Pré-processamento mínimo
         if not df.empty:
@@ -503,7 +493,7 @@ def calcular_dividas_total(saldos_info):
 
 @st.cache_data(ttl=600)
 def gerar_grafico_categorias_otimizado(df_filtrado):
-    """Gera gráfico de categorias com cache otimizado e layout responsivo."""
+    """Gera gráfico de categorias com cache otimizado."""
     if df_filtrado.empty or "Categoria" not in df_filtrado.columns:
         return None
         
@@ -523,53 +513,32 @@ def gerar_grafico_categorias_otimizado(df_filtrado):
         # Ordenar por valor para melhor visualização
         categoria_resumo = categoria_resumo.sort_values("ValorAbs", ascending=False)
         
-        # Agrupar categorias pequenas em "Outros" se houver muitas categorias
-        if len(categoria_resumo) > 8:
-            # Manter top 7 categorias e agrupar o resto em "Outros"
-            top_categorias = categoria_resumo.head(7)
-            outros_valor = categoria_resumo.tail(len(categoria_resumo) - 7)["ValorAbs"].sum()
-            
-            if outros_valor > 0:
-                outros_row = pd.DataFrame({
-                    "Categoria": ["Outros"],
-                    "Valor": [0],  # Valor original não usado
-                    "ValorAbs": [outros_valor]
-                })
-                categoria_resumo = pd.concat([top_categorias, outros_row], ignore_index=True)
-        
         fig = px.pie(categoria_resumo, 
                     names="Categoria", 
                     values="ValorAbs",
                     title="Distribuição por Categoria", 
                     template="plotly_white")
         
-        # Configurações de layout responsivo
+        # Configurações de layout para melhor alinhamento
         fig.update_layout(
-            height=400,
-            font=dict(size=11),
-            showlegend=True,
+            height=350,
+            font=dict(size=12),
             legend=dict(
-                orientation="h",  # Legenda horizontal
-                yanchor="top",
-                y=-0.1,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=10)
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.01
             ),
-            margin=dict(l=10, r=10, t=50, b=80),
-            title=dict(
-                x=0.5,
-                font=dict(size=14)
-            )
+            margin=dict(l=20, r=80, t=50, b=20)
         )
         
         # Configurações das fatias do gráfico
         fig.update_traces(
-            textposition='auto',
-            textinfo='percent',
+            textposition='inside',
+            textinfo='percent+label',
             textfont_size=10,
-            hovertemplate='<b>%{label}</b><br>Valor: R$ %{value:,.2f}<br>Percentual: %{percent}<extra></extra>',
-            pull=[0.05 if name == "Outros" else 0 for name in categoria_resumo["Categoria"]]
+            pull=[0.1 if name == "Outros" else 0 for name in categoria_resumo["Categoria"]]
         )
         
         return fig
@@ -591,12 +560,8 @@ def gerar_grafico_evolucao_otimizado(df_filtrado):
 
 # Carregar dados principais
 usuario = st.session_state.get('usuario', 'default')
-
-# Verificar se deve usar modo rápido por padrão
-skip_llm_default = os.environ.get("SKIP_LLM_PROCESSING", "false").lower() == "true"
-
 with st.spinner("Carregando dados financeiros..."):
-    saldos_info, df = carregar_dados_home(usuario, modo_rapido=skip_llm_default)
+    saldos_info, df = carregar_dados_home(usuario)
 
 if df.empty:
     st.warning("⚠️ Nenhum extrato encontrado!")
@@ -677,186 +642,6 @@ col2.metric("Despesas", formatar_valor_monetario(abs(resumo['despesas'])))
 col3.metric("Saldo Líquido", formatar_valor_monetario(resumo['saldo_liquido']))
 col4.metric("Transações", resumo['total_transacoes'])
 
-# Seção de detalhamento das transações
-st.subheader("🔍 Detalhamento das Transações")
-
-# Obter dados detalhados do resumo financeiro
-resumo_detalhado = calcular_resumo_financeiro(df_filtrado)
-
-# Criar tabs para mostrar as categorias de transações
-tab1, tab2, tab3 = st.tabs(["💰 Receitas", "💸 Despesas", "🔄 Excluídas"])
-
-with tab1:
-    st.markdown("### Transações consideradas como **Receitas**")
-    
-    # Filtrar apenas as transações classificadas como receitas
-    indices_receitas = [idx for idx, val in resumo_detalhado.get('é_receita_real', {}).items() if val]
-    
-    if indices_receitas:
-        df_receitas = df_filtrado.loc[indices_receitas].copy()
-        df_receitas = df_receitas.sort_values('Data', ascending=False)
-        
-        # Formatação para exibição
-        df_receitas_display = formatar_df_monetario(df_receitas, "Valor")
-        
-        # Métricas das receitas
-        col_r1, col_r2, col_r3 = st.columns(3)
-        col_r1.metric("Total de Receitas", formatar_valor_monetario(df_receitas['Valor'].sum()))
-        col_r2.metric("Número de Transações", len(df_receitas))
-        col_r3.metric("Valor Médio", formatar_valor_monetario(df_receitas['Valor'].mean()))
-        
-        # Tabela das receitas
-        st.dataframe(
-            df_receitas_display[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
-                columns={"ValorFormatado": "Valor"}
-            ),
-            use_container_width=True,
-            height=300
-        )
-        
-        # Gráfico de receitas por categoria
-        if len(df_receitas) > 0 and 'Categoria' in df_receitas.columns:
-            receitas_por_categoria = df_receitas.groupby('Categoria')['Valor'].sum().reset_index()
-            receitas_por_categoria = receitas_por_categoria.sort_values('Valor', ascending=False)
-            
-            fig_receitas = px.bar(
-                receitas_por_categoria, 
-                x='Categoria', 
-                y='Valor',
-                title="Receitas por Categoria",
-                template="plotly_white",
-                color='Valor',
-                color_continuous_scale='Greens'
-            )
-            fig_receitas.update_layout(height=300, showlegend=False)
-            st.plotly_chart(fig_receitas, use_container_width=True)
-    else:
-        st.info("📊 Nenhuma transação foi classificada como receita no período selecionado.")
-
-with tab2:
-    st.markdown("### Transações consideradas como **Despesas**")
-    
-    # Filtrar apenas as transações classificadas como despesas
-    indices_despesas = [idx for idx, val in resumo_detalhado.get('é_despesa_real', {}).items() if val]
-    
-    if indices_despesas:
-        df_despesas = df_filtrado.loc[indices_despesas].copy()
-        df_despesas = df_despesas.sort_values('Data', ascending=False)
-        
-        # Formatação para exibição
-        df_despesas_display = formatar_df_monetario(df_despesas, "Valor")
-        
-        # Métricas das despesas
-        col_d1, col_d2, col_d3 = st.columns(3)
-        col_d1.metric("Total de Despesas", formatar_valor_monetario(abs(df_despesas['Valor'].sum())))
-        col_d2.metric("Número de Transações", len(df_despesas))
-        col_d3.metric("Valor Médio", formatar_valor_monetario(abs(df_despesas['Valor'].mean())))
-        
-        # Tabela das despesas
-        st.dataframe(
-            df_despesas_display[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
-                columns={"ValorFormatado": "Valor"}
-            ),
-            use_container_width=True,
-            height=300
-        )
-        
-        # Gráfico de despesas por categoria
-        if len(df_despesas) > 0 and 'Categoria' in df_despesas.columns:
-            despesas_por_categoria = df_despesas.groupby('Categoria')['Valor'].sum().reset_index()
-            despesas_por_categoria['Valor'] = despesas_por_categoria['Valor'].abs()  # Valores absolutos
-            despesas_por_categoria = despesas_por_categoria.sort_values('Valor', ascending=False)
-            
-            fig_despesas = px.bar(
-                despesas_por_categoria, 
-                x='Categoria', 
-                y='Valor',
-                title="Despesas por Categoria",
-                template="plotly_white",
-                color='Valor',
-                color_continuous_scale='Reds'
-            )
-            fig_despesas.update_layout(height=300, showlegend=False)
-            st.plotly_chart(fig_despesas, use_container_width=True)
-    else:
-        st.info("📊 Nenhuma transação foi classificada como despesa no período selecionado.")
-
-with tab3:
-    st.markdown("### Transações **Excluídas** dos cálculos")
-    st.caption("Transações internas, aplicações financeiras, pagamentos de cartão, etc.")
-    
-    # Filtrar transações que não são nem receitas nem despesas
-    indices_receitas = set(idx for idx, val in resumo_detalhado.get('é_receita_real', {}).items() if val)
-    indices_despesas = set(idx for idx, val in resumo_detalhado.get('é_despesa_real', {}).items() if val)
-    todos_indices = set(df_filtrado.index)
-    indices_excluidas = todos_indices - indices_receitas - indices_despesas
-    
-    if indices_excluidas:
-        df_excluidas = df_filtrado.loc[list(indices_excluidas)].copy()
-        df_excluidas = df_excluidas.sort_values('Data', ascending=False)
-        
-        # Formatação para exibição
-        df_excluidas_display = formatar_df_monetario(df_excluidas, "Valor")
-        
-        # Métricas das excluídas
-        col_e1, col_e2, col_e3 = st.columns(3)
-        col_e1.metric("Valor Total", formatar_valor_monetario(df_excluidas['Valor'].sum()))
-        col_e2.metric("Número de Transações", len(df_excluidas))
-        
-        # Calcular porcentagem do total
-        total_transacoes = len(df_filtrado)
-        percentual_excluidas = (len(df_excluidas) / total_transacoes * 100) if total_transacoes > 0 else 0
-        col_e3.metric("% do Total", f"{percentual_excluidas:.1f}%")
-        
-        # Explicação do motivo das exclusões
-        st.info("""
-        **Por que estas transações foram excluídas?**
-        
-        - 🔄 **Transferências internas**: Entre suas próprias contas
-        - 💳 **Pagamentos de cartão**: Evita contabilização dupla
-        - 💰 **Aplicações financeiras**: Apenas movimentação de patrimônio
-        - 🔍 **Transações sem classificação clara**: Aguardando mais informações
-        """)
-        
-        # Tabela das excluídas
-        st.dataframe(
-            df_excluidas_display[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
-                columns={"ValorFormatado": "Valor"}
-            ),
-            use_container_width=True,
-            height=300
-        )
-        
-        # Mostrar motivos de exclusão mais comuns
-        if len(df_excluidas) > 0:
-            # Analisar categorias mais comuns nas excluídas
-            if 'Categoria' in df_excluidas.columns:
-                categorias_excluidas = df_excluidas['Categoria'].value_counts().head(5)
-                
-                st.markdown("**Principais categorias excluídas:**")
-                for categoria, count in categorias_excluidas.items():
-                    st.markdown(f"- **{categoria}**: {count} transações")
-    else:
-        st.success("✅ Todas as transações do período foram classificadas como receitas ou despesas.")
-
-# Resumo da classificação
-st.markdown("---")
-st.markdown("### 📈 Resumo da Classificação")
-
-total_transacoes = len(df_filtrado)
-if total_transacoes > 0:
-    num_receitas = len([idx for idx, val in resumo_detalhado.get('é_receita_real', {}).items() if val])
-    num_despesas = len([idx for idx, val in resumo_detalhado.get('é_despesa_real', {}).items() if val])
-    num_excluidas = total_transacoes - num_receitas - num_despesas
-    
-    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-    col_s1.metric("Total de Transações", total_transacoes)
-    col_s2.metric("Receitas", f"{num_receitas} ({num_receitas/total_transacoes*100:.1f}%)")
-    col_s3.metric("Despesas", f"{num_despesas} ({num_despesas/total_transacoes*100:.1f}%)")
-    col_s4.metric("Excluídas", f"{num_excluidas} ({num_excluidas/total_transacoes*100:.1f}%)")
-else:
-    st.info("Nenhuma transação encontrada no período selecionado.")
-
 # Visualizações essenciais
 if not df_filtrado.empty:
     col1, col2 = st.columns(2)
@@ -872,44 +657,6 @@ if not df_filtrado.empty:
         fig2 = gerar_grafico_evolucao_otimizado(df_filtrado)
         if fig2:
             st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
-
-# Checagem de IA ativa e indicador de modo
-pluggy = get_pluggy_connector()
-skip_llm = os.environ.get("SKIP_LLM_PROCESSING", "false").lower() == "true"
-
-if skip_llm:
-    st.sidebar.markdown("---")
-    st.sidebar.warning("⚡ **MODO RÁPIDO ATIVO**\n\nProcessamento IA desabilitado para performance otimizada")
-    st.sidebar.info("💡 Para categorização inteligente, desative o 'Modo Rápido' e atualize os dados")
-elif getattr(pluggy, "chat_model", None) is None:
-    st.sidebar.markdown("---")
-    st.sidebar.warning("⚠️ **IA NÃO CONFIGURADA**\n\nO processamento com IA está ativado, mas o modelo LLM não foi inicializado. Verifique a variável OPENAI_API_KEY e as dependências do LangChain/OpenAI.")
-else:
-    st.sidebar.markdown("---")
-    st.sidebar.success("🤖 **IA ATIVA**\n\nProcessamento inteligente habilitado para categorização precisa")
-
-# Seção de gerenciamento de transações
-st.markdown("---")
-st.subheader("⚙️ Gerenciamento de Transações")
-
-col_manage1, col_manage2, col_manage3 = st.columns(3)
-
-with col_manage1:
-    if st.button("✏️ Editar Transações", use_container_width=True, help="Corrigir categorizações incorretas"):
-        st.switch_page("pages/Gerenciar_Transacoes.py")
-
-with col_manage2:
-    st.metric("Transações Processadas", len(df_filtrado))
-
-with col_manage3:
-    if not df_filtrado.empty:
-        resumo_gerenciamento = calcular_resumo_financeiro(df_filtrado)
-        num_receitas = len([idx for idx, val in resumo_gerenciamento.get('é_receita_real', {}).items() if val])
-        num_despesas = len([idx for idx, val in resumo_gerenciamento.get('é_despesa_real', {}).items() if val])
-        precisao = ((num_receitas + num_despesas) / len(df_filtrado) * 100) if len(df_filtrado) > 0 else 0
-        st.metric("Precisão da Classificação", f"{precisao:.1f}%")
-
-st.info("💡 **Dica:** Use a página de Gerenciar Transações para corrigir categorizações automáticas incorretas, deletar transações irrelevantes ou reclassificar o tipo (Receita/Despesa/Excluída).")
 
 # Extrato detalhado (colapsado)
 with st.expander("📋 Ver Extrato Detalhado"):

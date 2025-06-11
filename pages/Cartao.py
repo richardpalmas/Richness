@@ -4,6 +4,7 @@ import plotly.express as px
 from datetime import date, timedelta
 from dotenv import load_dotenv
 
+from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection
 from utils.auth import verificar_autenticacao
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
@@ -18,9 +19,9 @@ st.set_page_config(page_title="Cartão de Crédito", layout="wide")
 verificar_autenticacao()
 usuario = st.session_state.get('usuario', 'default')
 
-# Mensagem de boas-vindas
+# Exibição de foto de perfil e mensagem de boas-vindas
 if usuario:
-    st.success(f"👋 Bem-vindo(a), {usuario}!")
+    boas_vindas_com_foto(usuario)
 
 st.title("💳 Cartão de Crédito")
 
@@ -152,24 +153,19 @@ st.sidebar.header("🔍 Filtros")
 categorias_selecionadas = filtro_categorias(df, "Filtrar por Categorias", "cartao")
 df_filtered = df[df["Categoria"].isin(categorias_selecionadas)] if categorias_selecionadas else df
 
-# NOVO: considerar apenas valores positivos (gastos)
-df_gastos = df_filtered[df_filtered["Valor"] > 0]
-
-if df_gastos.empty:
-    st.warning("❌ Nenhuma transação de gasto encontrada com os filtros atuais.")
+if df_filtered.empty:
+    st.warning("❌ Nenhuma transação encontrada com os filtros atuais.")
     st.stop()
 
 # 📊 Resumo financeiro
-# Somente gastos positivos
-
-despesas = df_gastos["Valor"].sum()
+despesas = df_filtered["Valor"].sum()
 col1, col2 = st.columns(2)
 col1.metric("💰 Total de Gastos", formatar_valor_monetario(abs(despesas)))
-col2.metric("📄 Transações", len(df_gastos))
+col2.metric("📄 Transações", len(df_filtered))
 
 # 📋 Tabela de transações
 st.subheader("📋 Transações do Cartão")
-df_formatado = formatar_df_monetario(df_gastos, "Valor")
+df_formatado = formatar_df_monetario(df_filtered, "Valor")
 st.dataframe(
     df_formatado[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
         columns={"ValorFormatado": "Valor"}
@@ -182,70 +178,24 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("📊 Gastos por Categoria")
-    category_data = df_gastos.groupby("Categoria")["Valor"].sum().abs().reset_index()
+    category_data = df_filtered.groupby("Categoria")["Valor"].sum().abs().reset_index()
     
     if not category_data.empty:
-        # Ordenar por valor para melhor visualização
-        category_data = category_data.sort_values("Valor", ascending=False)
-        
-        # Agrupar categorias pequenas em "Outros" se houver muitas categorias
-        if len(category_data) > 8:
-            # Manter top 7 categorias e agrupar o resto em "Outros"
-            top_categorias = category_data.head(7)
-            outros_valor = category_data.tail(len(category_data) - 7)["Valor"].sum()
-            
-            if outros_valor > 0:
-                outros_row = pd.DataFrame({
-                    "Categoria": ["Outros"],
-                    "Valor": [outros_valor]
-                })
-                category_data = pd.concat([top_categorias, outros_row], ignore_index=True)
-        
         fig = px.pie(
             category_data,
             names="Categoria",
             values="Valor",
             title="Distribuição por Categoria",
-            template="plotly_white"
+            hole=0.3
         )
-        
-        # Configurações de layout responsivo
-        fig.update_layout(
-            height=400,
-            font=dict(size=11),
-            showlegend=True,
-            legend=dict(
-                orientation="h",  # Legenda horizontal
-                yanchor="top",
-                y=-0.1,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=10)
-            ),
-            margin=dict(l=10, r=10, t=50, b=80),
-            title=dict(
-                x=0.5,
-                font=dict(size=14)
-            )
-        )
-        
-        # Configurações das fatias do gráfico
-        fig.update_traces(
-            textposition='auto',
-            textinfo='percent',
-            textfont_size=10,
-            hovertemplate='<b>%{label}</b><br>Valor: R$ %{value:,.2f}<br>Percentual: %{percent}<extra></extra>',
-            pull=[0.05 if name == "Outros" else 0 for name in category_data["Categoria"]]
-        )
-        
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("📊 Sem dados para gráfico")
 
 with col2:
     st.subheader("📈 Evolução Mensal")
-    df_gastos["AnoMes"] = df_gastos["Data"].dt.strftime("%Y-%m")
-    monthly_data = df_gastos.groupby("AnoMes")["Valor"].sum().abs().reset_index()
+    df_filtered["AnoMes"] = df_filtered["Data"].dt.strftime("%Y-%m")
+    monthly_data = df_filtered.groupby("AnoMes")["Valor"].sum().abs().reset_index()
     
     if not monthly_data.empty:
         fig2 = px.line(monthly_data, x="AnoMes", y="Valor", markers=True, title="Gastos por Mês")
@@ -255,7 +205,7 @@ with col2:
 
 # 🏆 Top 5 Maiores Gastos otimizado
 st.subheader("🏆 Top 5 Maiores Gastos")
-top_gastos = df_gastos.copy()
+top_gastos = df_filtered.copy()
 top_gastos["ValorAbs"] = top_gastos["Valor"].abs()
 top_gastos = formatar_df_monetario(top_gastos, "ValorAbs").sort_values("ValorAbs", ascending=False).head(5)
 
