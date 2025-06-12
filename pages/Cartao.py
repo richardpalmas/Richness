@@ -57,16 +57,6 @@ def carregar_dados_cartoes(dias):
         default_return=pd.DataFrame()
     )
 
-# Interface de seleção simplificada
-# Remover o seletor manual de datas:
-# data_atual = date.today()
-# data_inicio_padrao = data_atual - timedelta(days=180)
-# col1, col2 = st.columns(2)
-# with col1:
-#     data_inicio = st.date_input("Data inicial", value=data_inicio_padrao)
-# with col2:
-#     data_fim = st.date_input("Data final", value=data_atual)
-
 # Obter leitor OFX
 ofx_reader = get_ofx_reader()
 
@@ -98,29 +88,6 @@ if not df_cartoes_raw.empty and "Data" in df_cartoes_raw.columns:
     data_inicio_default = max(min_data, data_inicio_default)
     data_fim_default = min(max_data, data_fim_default)
 
-# Filtro de período igual ao da Home, mas com valor padrão dos últimos 30 dias
-selected_period = st.sidebar.date_input(
-    "Selecione o Período",
-    value=(data_inicio_default, data_fim_default),
-    key="cartao_date_filter"
-)
-if isinstance(selected_period, tuple) and len(selected_period) == 2:
-    data_inicio, data_fim = selected_period
-else:
-    data_inicio = data_fim = selected_period
-
-# Garantir que data_inicio e data_fim são do tipo date
-if isinstance(data_inicio, tuple):
-    data_inicio = data_inicio[0] if data_inicio else date.today()
-if isinstance(data_fim, tuple):
-    data_fim = data_fim[0] if data_fim else date.today()
-
-# Calcular dias do período
-try:
-    dias_periodo = (data_fim - data_inicio).days
-except Exception:
-    dias_periodo = 30  # fallback seguro
-
 # Carregar dados (sempre busca 365 dias para garantir todos os dados para o filtro)
 df_cartoes = carregar_dados_cartoes(365)
 
@@ -137,7 +104,29 @@ else:
     st.warning("Nenhuma transação encontrada para o período selecionado.")
     st.stop()
 
-# Aplicar filtro de data aos dados carregados
+# Gerar lista de meses/anos disponíveis
+if not df_cartoes.empty:
+    df_cartoes['AnoMes'] = df_cartoes['Data'].dt.strftime('%Y-%m')
+    meses_disponiveis = sorted(df_cartoes['AnoMes'].unique(), reverse=True)
+    if not meses_disponiveis:
+        st.warning("Nenhum mês disponível para seleção.")
+        st.stop()
+    mes_ano_selecionado = st.sidebar.selectbox(
+        "Selecione o mês",
+        meses_disponiveis,
+        index=0
+    )
+    ano, mes = map(int, mes_ano_selecionado.split('-'))
+    data_inicio = pd.Timestamp(year=ano, month=mes, day=1).date()
+    if mes == 12:
+        data_fim = pd.Timestamp(year=ano+1, month=1, day=1).date() - pd.Timedelta(days=1)
+    else:
+        data_fim = pd.Timestamp(year=ano, month=mes+1, day=1).date() - pd.Timedelta(days=1)
+else:
+    st.warning("Nenhuma transação encontrada para o período selecionado.")
+    st.stop()
+
+# Filtrar dados do mês selecionado
 df_cartoes_filtrado = df_cartoes[
     (df_cartoes["Data"].dt.date >= data_inicio) & 
     (df_cartoes["Data"].dt.date <= data_fim)
