@@ -30,45 +30,6 @@ st.title("💳 Cartão de Crédito")
 def get_ofx_reader():
     return OFXReader()
 
-# Interface de seleção simplificada
-st.subheader("📅 Período de Análise")
-
-# Calcular período padrão: 6 meses antes até hoje
-data_atual = date.today()
-data_inicio_padrao = data_atual - timedelta(days=180)  # Aproximadamente 6 meses
-
-col1, col2 = st.columns(2)
-with col1:
-    data_inicio = st.date_input("Data inicial", value=data_inicio_padrao)
-with col2:
-    data_fim = st.date_input("Data final", value=data_atual)
-
-# Obter leitor OFX
-ofx_reader = get_ofx_reader()
-
-# Verificar arquivos disponíveis
-resumo_arquivos = ofx_reader.get_resumo_arquivos()
-
-st.subheader("💳 Arquivos de Fatura Disponíveis")
-if resumo_arquivos['total_faturas'] == 0:
-    st.warning("⚠️ Nenhuma fatura de cartão encontrada!")
-    st.info("💡 **Como adicionar faturas:**")
-    st.markdown("""
-    1. 📁 Baixe suas faturas de cartão em formato .ofx do seu banco
-    2. 📂 Coloque os arquivos na pasta `faturas/`
-    3. 🔄 Atualize a página
-    """)
-    st.stop()
-
-# Mostrar informações dos arquivos
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("📄 Total de Faturas", resumo_arquivos['total_faturas'])
-with col2:
-    if resumo_arquivos['periodo_faturas']['inicio']:
-        periodo_texto = f"{resumo_arquivos['periodo_faturas']['inicio']} a {resumo_arquivos['periodo_faturas']['fim']}"
-        st.text(f"Período: {periodo_texto}")
-
 # Buscar dados com cache
 @st.cache_data(ttl=600, show_spinner="Carregando transações...")
 def carregar_dados_cartoes(dias):
@@ -96,16 +57,84 @@ def carregar_dados_cartoes(dias):
         default_return=pd.DataFrame()
     )
 
-# Calcular dias entre as datas
-dias_periodo = (data_fim - data_inicio).days
+# Interface de seleção simplificada
+# Remover o seletor manual de datas:
+# data_atual = date.today()
+# data_inicio_padrao = data_atual - timedelta(days=180)
+# col1, col2 = st.columns(2)
+# with col1:
+#     data_inicio = st.date_input("Data inicial", value=data_inicio_padrao)
+# with col2:
+#     data_fim = st.date_input("Data final", value=data_atual)
 
-# Carregar dados
-df_cartoes = carregar_dados_cartoes(dias_periodo)
+# Obter leitor OFX
+ofx_reader = get_ofx_reader()
 
-# Verificar se existem dados
-if df_cartoes.empty:
-    st.warning("📭 Nenhuma transação de cartão encontrada no período selecionado!")
-    st.info("Tente ajustar o período de análise ou verificar se há arquivos de fatura na pasta `faturas/`.")
+# Verificar arquivos disponíveis
+resumo_arquivos = ofx_reader.get_resumo_arquivos()
+
+# Carregar todos os dados disponíveis
+# (para garantir que o filtro de data funcione corretamente)
+df_cartoes_raw = ofx_reader.buscar_cartoes(365)  # 1 ano para garantir datas amplas
+
+# Definir período padrão: últimos 30 dias, mas limitado ao range dos dados
+from datetime import timedelta, date
+
+data_fim_default = date.today()
+data_inicio_default = data_fim_default - timedelta(days=30)
+
+# Ajustar para não ultrapassar o range dos dados
+if not df_cartoes_raw.empty and "Data" in df_cartoes_raw.columns:
+    min_data_val = df_cartoes_raw["Data"].min()
+    max_data_val = df_cartoes_raw["Data"].max()
+    if hasattr(min_data_val, 'date'):
+        min_data = min_data_val.date()
+    else:
+        min_data = min_data_val
+    if hasattr(max_data_val, 'date'):
+        max_data = max_data_val.date()
+    else:
+        max_data = max_data_val
+    data_inicio_default = max(min_data, data_inicio_default)
+    data_fim_default = min(max_data, data_fim_default)
+
+# Filtro de período igual ao da Home, mas com valor padrão dos últimos 30 dias
+selected_period = st.sidebar.date_input(
+    "Selecione o Período",
+    value=(data_inicio_default, data_fim_default),
+    key="cartao_date_filter"
+)
+if isinstance(selected_period, tuple) and len(selected_period) == 2:
+    data_inicio, data_fim = selected_period
+else:
+    data_inicio = data_fim = selected_period
+
+# Garantir que data_inicio e data_fim são do tipo date
+if isinstance(data_inicio, tuple):
+    data_inicio = data_inicio[0] if data_inicio else date.today()
+if isinstance(data_fim, tuple):
+    data_fim = data_fim[0] if data_fim else date.today()
+
+# Calcular dias do período
+try:
+    dias_periodo = (data_fim - data_inicio).days
+except Exception:
+    dias_periodo = 30  # fallback seguro
+
+# Carregar dados (sempre busca 365 dias para garantir todos os dados para o filtro)
+df_cartoes = carregar_dados_cartoes(365)
+
+# Garantir que a coluna 'Data' existe e está no formato datetime
+if not df_cartoes.empty:
+    if 'data' in df_cartoes.columns and 'Data' not in df_cartoes.columns:
+        df_cartoes['Data'] = pd.to_datetime(df_cartoes['data'])
+    elif 'Data' in df_cartoes.columns:
+        df_cartoes['Data'] = pd.to_datetime(df_cartoes['Data'])
+    else:
+        st.error("O arquivo de cartão não possui coluna de data válida.")
+        st.stop()
+else:
+    st.warning("Nenhuma transação encontrada para o período selecionado.")
     st.stop()
 
 # Aplicar filtro de data aos dados carregados
@@ -119,7 +148,6 @@ if df_cartoes_filtrado.empty:
     st.stop()
 
 # Filtros adicionais
-st.subheader("🔍 Filtros Avançados")
 col1, col2 = st.columns(2)
 
 with col2:

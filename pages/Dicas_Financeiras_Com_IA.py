@@ -108,7 +108,6 @@ class AIServiceManager:
             # Initialize with specific model to avoid issues
             self._openai_client = ChatOpenAI(
                 model="o4-mini-2025-04-16",
-                temperature=0.7,
                 max_completion_tokens=1000
             )
             

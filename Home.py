@@ -262,36 +262,6 @@ if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação", type="prim
     st.session_state.clear()
     st.rerun()
 
-# Configuração de carregamento
-carregamento_rapido = st.sidebar.checkbox(
-    "⚡ Carregamento Rápido", 
-    value=True,
-    help="Pula processamento com IA para carregar mais rápido"
-)
-
-if carregamento_rapido:
-    os.environ["SKIP_LLM_PROCESSING"] = "true"
-else:
-    os.environ["SKIP_LLM_PROCESSING"] = "false"
-
-
-    
-    # Recarregar página para mostrar dados atualizados
-    st.rerun()
-
-# Processar com IA (se carregamento rápido estiver habilitado)
-if carregamento_rapido:
-    if st.sidebar.button("🤖 Processar com IA", help="Aplica categorização e enriquecimento de IA aos dados já carregados"):
-        # Limpar cache para forçar reprocessamento com IA
-        ofx_reader = get_ofx_reader()
-        ofx_reader.limpar_cache()
-        os.environ["SKIP_LLM_PROCESSING"] = "false"
-        st.cache_data.clear()
-        st.sidebar.success("Processamento com IA concluído!")
-        st.rerun()
-
-
-
 # Carregar dados principais
 saldos_info, df = carregar_dados_home(usuario)
 
