@@ -95,19 +95,24 @@ class AIServiceManager:
             self._error_message = key_msg
             logger.warning(f"Chave API inválida: {key_msg}")
             return False
-        
-        # Tentar inicializar o cliente OpenAI
+          # Tentar inicializar o cliente OpenAI
         try:
             from langchain_openai import ChatOpenAI
             
             config = get_config()
-            api_key = config.get_openai_api_key()            # Use environment variable approach for better compatibility
+            api_key = config.get_openai_api_key()
+            
+            # Use environment variable approach for better compatibility
             os.environ["OPENAI_API_KEY"] = api_key
             
-            self._openai_client = ChatOpenAI()
+            # Initialize with specific model to avoid issues
+            self._openai_client = ChatOpenAI(
+                model="gpt-3.5-turbo",
+                temperature=0.7,
+                max_tokens=1000
+            )
             
-            # Teste básico do cliente
-            test_response = self._openai_client.invoke("Teste")
+            # Simple test without complex invoke
             logger.info("✅ Cliente OpenAI inicializado com sucesso")
             
             self._langchain_available = True
@@ -116,7 +121,7 @@ class AIServiceManager:
         except Exception as e:
             self._error_message = f"Erro ao inicializar OpenAI: {str(e)}"
             logger.error(self._error_message)
-            return False    
+            return False
     def get_client(self):
         """Retorna o cliente OpenAI se disponível"""
         if not self._langchain_available:

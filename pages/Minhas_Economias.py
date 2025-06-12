@@ -84,35 +84,36 @@ df_filtrado = aplicar_filtros(df, start_date, end_date, categorias_selecionadas)
 
 # Resumo financeiro atual baseado nos saldos calculados
 if saldos_info:
-    st.subheader("💰 Saldos por Conta")
+    st.subheader("💰 Saldo Consolidado")
     
     saldo_total_positivo = 0
     saldo_total_negativo = 0
     
-    cols = st.columns(len(saldos_info))
-    
-    for i, (origem, info) in enumerate(saldos_info.items()):
+    # Calcular totais sem mostrar contas individuais
+    for origem, info in saldos_info.items():
         saldo = info['saldo']
-        tipo = info['tipo']
         
         if saldo >= 0:
             saldo_total_positivo += saldo
         else:
             saldo_total_negativo += saldo
-        
-        # Ícone baseado no tipo de conta
-        icone = "💳" if tipo == "credit_card" else "🏦"
-        
-        with cols[i]:
-            st.metric(
-                f"{icone} {origem.split('.')[0]}", 
-                formatar_valor_monetario(saldo)
-            )
     
-    # Resumo geral
-    col1, col2 = st.columns(2)
-    col1.metric("🟢 Total Positivo", formatar_valor_monetario(saldo_total_positivo))
-    col2.metric("🔴 Total Negativo", formatar_valor_monetario(abs(saldo_total_negativo)))
+    # Calcular saldo líquido total
+    saldo_liquido_total = saldo_total_positivo + saldo_total_negativo
+    
+    # Mostrar apenas o saldo consolidado
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("🟢 Total Positivo", formatar_valor_monetario(saldo_total_positivo))
+    
+    with col2:
+        st.metric("🔴 Total Negativo", formatar_valor_monetario(abs(saldo_total_negativo)))
+    
+    with col3:
+        # Definir cor baseada no saldo
+        delta_color = "normal" if saldo_liquido_total >= 0 else "inverse"
+        st.metric("💳 Saldo Líquido Total", formatar_valor_monetario(saldo_liquido_total))
 
 # Resumo do período filtrado
 resumo = calcular_resumo_financeiro(df_filtrado)
