@@ -252,3 +252,10 @@ with st.expander("ℹ️ Informações Técnicas"):
         ofx_reader.limpar_cache()
         st.cache_data.clear()
         st.success("Cache limpo! Recarregue a página para ver os dados atualizados.")
+
+# Botão sair sempre visível
+if st.session_state.get('autenticado', False):
+    if st.button('🚪 Sair', key='logout_btn'):
+        st.session_state.clear()
+        st.success('Você saiu do sistema.')
+        st.rerun()

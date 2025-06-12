@@ -80,6 +80,10 @@ class InputValidator:
     @classmethod
     def validate_email(cls, email: str) -> bool:
         """Valida email"""
+        # Se o email estiver vazio, é válido (opcional)
+        if not email:
+            return True
+            
         if not isinstance(email, str):
             return False
         

@@ -290,6 +290,26 @@ class SecurityLogger:
         # Esta é uma implementação básica - pode ser expandida
         
         return report
+    def _log_user_operation(self, operation: str, username: str, details: Optional[Dict[str, Any]] = None):
+        """Log específico para operações com usuários"""
+        try:
+            message = {
+                'timestamp': datetime.now().isoformat(),
+                'operation': operation,
+                'username': username,
+                'details': details if details is not None else {}
+            }
+            
+            self.auth_logger.info(
+                f"USER_OP - {json.dumps(message, ensure_ascii=False)}"
+            )
+            
+            # Log adicional no arquivo do sistema
+            with open(self.log_dir / 'system_security.log', 'a', encoding='utf-8') as f:
+                f.write(f"{datetime.now().isoformat()} - USER_OPERATION - {json.dumps(message, ensure_ascii=False)}\n")
+                
+        except Exception as e:
+            self.auth_logger.error(f"Error logging user operation: {str(e)}")
 
 
 # Singleton global

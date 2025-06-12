@@ -256,6 +256,12 @@ def carregar_dados_home(usuario, force_refresh=False):
 # Sidebar - Configurações
 st.sidebar.header("⚙️ Configurações")
 
+# Botão de Sair
+st.sidebar.markdown("---")  # Separador visual
+if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação", type="primary"):
+    st.session_state.clear()
+    st.rerun()
+
 # Configuração de carregamento
 carregamento_rapido = st.sidebar.checkbox(
     "⚡ Carregamento Rápido", 

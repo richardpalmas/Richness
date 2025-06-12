@@ -189,3 +189,10 @@ with st.expander("📋 Ver Extrato Detalhado"):
         ),
         use_container_width=True
     )
+
+# Botão sair sempre visível
+if st.session_state.get('autenticado', False):
+    if st.button('🚪 Sair', key='logout_btn'):
+        st.session_state.clear()
+        st.success('Você saiu do sistema.')
+        st.rerun()

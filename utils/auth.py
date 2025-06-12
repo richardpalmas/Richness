@@ -21,6 +21,19 @@ def _gerar_html_aviso_login():
     </div>
     """
 
+def adicionar_botao_sair():
+    """
+    Adiciona o botão de sair na barra lateral de forma consistente.
+    """
+    # Separador visual antes do botão de sair
+    st.sidebar.markdown("---")
+    
+    # Botão de sair com estilo consistente
+    if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação", type="primary"):
+        st.session_state['autenticado'] = False
+        st.session_state['usuario'] = ''
+        st.rerun()
+
 def checar_autenticacao():
     """
     Função centralizada para verificar autenticação do usuário.
@@ -31,20 +44,21 @@ def checar_autenticacao():
         st.markdown(_gerar_html_aviso_login(), unsafe_allow_html=True)
         return False
 
-    # Adicionar botão de logout na barra lateral (consistente com Home.py)
-    if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação"):
-        st.session_state['autenticado'] = False
-        st.session_state['usuario'] = ''
-        st.rerun()
-
+    # Adicionar botão de logout na barra lateral
+    adicionar_botao_sair()
     return True
 
 def verificar_autenticacao():
     """
     Versão simplificada que interrompe a execução se o usuário não estiver autenticado.
     Útil para páginas que não devem ser carregadas sem autenticação.
+    Adiciona o botão de sair na barra lateral.
     Retorna True se autenticado, não retorna nada se não autenticado (pois para com st.stop()).
     """
-    if not checar_autenticacao():
+    if not st.session_state.get('autenticado'):
+        st.markdown(_gerar_html_aviso_login(), unsafe_allow_html=True)
         st.stop()
+    
+    # Adicionar botão de sair na barra lateral
+    adicionar_botao_sair()
     return True

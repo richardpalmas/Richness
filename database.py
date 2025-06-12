@@ -271,7 +271,7 @@ def remover_usuario(usuario):
         cur.execute('DELETE FROM cartoes WHERE usuario_id = ?', (usuario_id,))
         cur.execute('DELETE FROM extratos WHERE usuario_id = ?', (usuario_id,))
         cur.execute('DELETE FROM pluggy_items WHERE usuario_id = ?', (usuario_id,))
-        cur.execute('DELETE FROM user_sessions WHERE usuario_id = ?', (usuario_id,))
+        cur.execute('DELETE FROM user_sessions WHERE user_id = ?', (usuario_id,))
         
         # Manter logs de auditoria por compliance (não remover)
         # cur.execute('DELETE FROM audit_logs WHERE user_id = ?', (usuario_id,))
@@ -301,6 +301,103 @@ def remover_usuario(usuario):
             success=False,
             error=str(e)
         )
+        return False
+
+
+def remover_usuario_por_id(usuario_id):
+    """
+    Remove o usuário e todos os seus dados relacionados pelo id.
+    """
+    from security.audit.security_logger import get_security_logger
+    logger = get_security_logger()
+
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Buscar nome de usuário para logging
+        cur.execute('SELECT usuario FROM usuarios WHERE id = ?', (usuario_id,))
+        row = cur.fetchone()
+        if not row:
+            logger.log_data_access(
+                username="system",
+                operation="user_deletion_failed",
+                resource="usuarios",
+                error=f"Usuario ID {usuario_id} não encontrado"
+            )
+            return False
+            
+        username = row['usuario']
+        logger.log_data_access(
+            username=username,
+            operation="user_deletion_started",
+            resource="all_user_data"
+        )
+
+        # Usar transação para garantir atomicidade
+        conn.execute('BEGIN TRANSACTION')
+        
+        try:
+            # Remover dados relacionados
+            cur.execute('DELETE FROM economias WHERE usuario_id = ?', (usuario_id,))
+            logger.log_data_access(username=username, operation="delete_data", resource="economias")
+            
+            cur.execute('DELETE FROM cartoes WHERE usuario_id = ?', (usuario_id,))
+            logger.log_data_access(username=username, operation="delete_data", resource="cartoes")
+            
+            cur.execute('DELETE FROM extratos WHERE usuario_id = ?', (usuario_id,))
+            logger.log_data_access(username=username, operation="delete_data", resource="extratos")
+            
+            cur.execute('DELETE FROM pluggy_items WHERE usuario_id = ?', (usuario_id,))
+            logger.log_data_access(username=username, operation="delete_data", resource="pluggy_items")
+            
+            cur.execute('DELETE FROM user_sessions WHERE user_id = ?', (usuario_id,))
+            logger.log_data_access(username=username, operation="delete_data", resource="user_sessions")
+
+            # Remover roles do usuário
+            cur.execute('DELETE FROM user_roles WHERE user_id = ?', (usuario_id,))
+            logger.log_data_access(username=username, operation="delete_data", resource="user_roles")
+            
+            # Remover o usuário por último
+            cur.execute('DELETE FROM usuarios WHERE id = ?', (usuario_id,))
+            logger.log_data_access(username=username, operation="delete_data", resource="usuarios")
+            
+            # Commit da transação
+            conn.commit()
+            
+            # Limpar cache após remoção bem-sucedida
+            from database import limpar_cache_consultas
+            limpar_cache_consultas()
+            
+            logger.log_data_access(
+                username=username,
+                operation="user_deletion_completed",
+                resource="all_user_data",
+                success=True
+            )
+            
+            print(f"Usuário {username} (ID: {usuario_id}) removido com sucesso")
+            return True
+            
+        except Exception as e:
+            conn.rollback()
+            logger.log_data_access(
+                username=username,
+                operation="user_deletion_failed",
+                resource="all_user_data",
+                error=f"Erro durante a remoção: {str(e)}"
+            )
+            print(f"Erro durante a remoção do usuário {username} (ID: {usuario_id}): {str(e)}")
+            return False
+            
+    except Exception as e:
+        logger.log_data_access(
+            username=str(usuario_id),
+            operation="user_deletion_failed",
+            resource="all_user_data",
+            error=f"Erro inicial: {str(e)}"
+        )
+        print(f"Erro ao iniciar remoção do usuário {usuario_id}: {str(e)}")
         return False
 
 
@@ -960,7 +1057,7 @@ def get_user_role(user_id):
     conn = get_connection()
     cursor = conn.cursor()
     
-    # Primeiro verifica na tabela de roles
+    # Verifica na tabela de roles
     cursor.execute('''
         SELECT role FROM user_roles 
         WHERE user_id = ? 
@@ -968,22 +1065,7 @@ def get_user_role(user_id):
     ''', (user_id,))
     
     role_row = cursor.fetchone()
-    if role_row:
-        return 'admin'
-    
-    # Caso especial para o usuário richardpalmas (para compatibilidade)
-    cursor.execute('''
-        SELECT usuario FROM usuarios 
-        WHERE id = ?
-    ''', (user_id,))
-    
-    user_row = cursor.fetchone()
-    if user_row and user_row['usuario'] == 'richardpalmas':
-        # Atualiza a tabela de roles para richardpalmas se ainda não estiver lá
-        set_user_role(user_id, 'admin')
-        return 'admin'
-    
-    return 'user'
+    return 'admin' if role_row else 'user'
 
 def set_user_role(user_id, role):
     """
@@ -1013,6 +1095,102 @@ def set_user_role(user_id, role):
         print(f"Erro ao definir role do usuário: {e}")
         return False
 
-if __name__ == '__main__':
-    create_tables()
+def listar_usuarios_ativos():
+    """
+    Lista todos os usuários ativos no sistema.
+    Considera como ativos todos os usuários cadastrados (pode ser ajustado se houver campo de status).
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT id, usuario, nome, email FROM usuarios')
+    usuarios = cur.fetchall()
+    return [dict(u) for u in usuarios] if usuarios else []
+
+def conceder_admin_para_usuario(username):
+    """Concede privilégios de admin para um usuário pelo nome"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Buscar ID do usuário
+        cursor.execute('SELECT id FROM usuarios WHERE usuario = ?', (username,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        
+        user_id = row['id']
+        
+        # Remover roles existentes
+        cursor.execute('DELETE FROM user_roles WHERE user_id = ?', (user_id,))
+        
+        # Adicionar role admin
+        cursor.execute('''
+            INSERT INTO user_roles (user_id, role) 
+            VALUES (?, 'admin')
+        ''', (user_id,))
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        print(f"Erro ao conceder admin: {str(e)}")
+        return False
+
+def alterar_nivel_acesso(user_id: int, novo_nivel: str) -> bool:
+    """
+    Altera o nível de acesso de um usuário.
+    Args:
+        user_id: ID do usuário
+        novo_nivel: Novo nível de acesso ('admin' ou 'user')
+    Returns:
+        bool: True se a alteração foi bem sucedida, False caso contrário
+    """
+    from security.audit.security_logger import get_security_logger
+    logger = get_security_logger()
+
+    if novo_nivel not in ['admin', 'user']:
+        return False
+
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Buscar nome de usuário para logging
+        cur.execute('SELECT usuario FROM usuarios WHERE id = ?', (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return False
+            
+        username = row['usuario']
+        
+        conn.execute('BEGIN TRANSACTION')
+        
+        # Remover roles existentes
+        cur.execute('DELETE FROM user_roles WHERE user_id = ?', (user_id,))
+        
+        # Adicionar nova role
+        cur.execute('INSERT INTO user_roles (user_id, role) VALUES (?, ?)', 
+                   (user_id, novo_nivel))
+        
+        conn.commit()
+        
+        # Log da alteração
+        logger.log_data_access(
+            username=username,
+            operation="role_change",
+            resource="user_roles",
+            success=True
+        )
+        
+        return True
+        
+    except Exception as e:
+        conn.rollback()
+        logger.log_data_access(
+            username=str(user_id),
+            operation="role_change_failed",
+            resource="user_roles",
+            error=str(e)
+        )
+        return False
 

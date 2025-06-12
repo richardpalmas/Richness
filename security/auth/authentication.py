@@ -223,7 +223,8 @@ class SecureAuthentication:
             if not self.validator.validate_username(username):
                 return False, "Username inválido. Use 3-30 caracteres alfanuméricos e _ -"
             
-            if not self.validator.validate_email(email):
+            # Validar email apenas se fornecido
+            if email and not self.validator.validate_email(email):
                 return False, "Email inválido"
             
             # Validar política de senha
@@ -235,15 +236,28 @@ class SecureAuthentication:
             conn = get_connection()
             cur = conn.cursor()
             
-            cur.execute('SELECT 1 FROM usuarios WHERE usuario = ? OR email = ?', (username, email))
+            # Verificar username duplicado
+            cur.execute('SELECT 1 FROM usuarios WHERE usuario = ?', (username,))
             if cur.fetchone():
                 self.logger.log_user_registration(
                     username=username,
                     success=False,
-                    error="Usuário ou email já existe",
+                    error="Usuário já existe",
                     ip_address=ip_address
                 )
-                return False, "Usuário ou email já existe"
+                return False, "Nome de usuário já existe"
+            
+            # Verificar email duplicado apenas se fornecido
+            if email:
+                cur.execute('SELECT 1 FROM usuarios WHERE email = ?', (email,))
+                if cur.fetchone():
+                    self.logger.log_user_registration(
+                        username=username,
+                        success=False,
+                        error="Email já cadastrado",
+                        ip_address=ip_address
+                    )
+                    return False, "Email já cadastrado por outro usuário"
             
             # Hash da senha
             hashed_password = self.hash_password(password)
@@ -252,7 +266,7 @@ class SecureAuthentication:
             cur.execute('''
                 INSERT INTO usuarios (nome, usuario, senha, email, profile_pic, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (nome, username, hashed_password, email, profile_pic, datetime.now().isoformat()))
+            ''', (nome, username, hashed_password, email or None, profile_pic, datetime.now().isoformat()))
             
             conn.commit()
             

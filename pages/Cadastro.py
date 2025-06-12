@@ -119,6 +119,13 @@ def process_profile_picture(foto, usuario):
 
 st.title('📝 Cadastro de Usuário')
 
+# Botão sair sempre visível
+if st.session_state.get('autenticado', False):
+    if st.button('🚪 Sair', key='logout_btn'):
+        st.session_state.clear()
+        st.success('Você saiu do sistema.')
+        st.rerun()
+
 # Verificar se já está autenticado
 if st.session_state.get('autenticado', False):
     st.info('✅ Você já está autenticado!')

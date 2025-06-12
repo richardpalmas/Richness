@@ -73,7 +73,7 @@ except ImportError:
             return FallbackRateLimiter()
 
 from security.auth.session_manager import get_session_manager
-from database import get_connection
+from database import get_connection, get_user_role, get_usuario_por_nome
 
 
 class SecurityDashboard:
@@ -543,29 +543,25 @@ def main():
         page_icon="🛡️",
         layout="wide"
     )
-      # Verificar autenticação (assumindo que já existe)
-    if not st.session_state.get('autenticado', False):
-        st.error("🔒 Acesso negado. Faça login primeiro.")
-        st.stop()
-    
-    # Verificar permissões de admin (se implementado)
+
+    # Usar função global de autenticação que já inclui o botão de sair
+    from utils.auth import verificar_autenticacao
+    verificar_autenticacao()
+
+    # Verificar permissões de admin
     current_user = st.session_state.get('usuario', '')
-    user_role = st.session_state.get('user_role', 'user')
+    user_role = 'user'  # valor padrão
     
-    # Dar acesso especial para o usuário richardpalmas
-    if current_user == 'richardpalmas':
-        # Garantir que richardpalmas sempre tenha role de admin
-        st.session_state['user_role'] = 'admin'
-        user_role = 'admin'
+    user_data = get_usuario_por_nome(current_user, campos="id, usuario")
+    if user_data:
+        user_role = get_user_role(user_data['id'])
+        st.session_state['user_role'] = user_role
     
+    # Verificar se é admin
     if user_role != 'admin':
-        st.error("🚫 Acesso restrito. Apenas administradores podem acessar este dashboard.")
+        st.error("🔒 Esta página é restrita a administradores.")
         st.stop()
-    
-    # Renderizar dashboard
+
+    # Criar e renderizar dashboard
     dashboard = SecurityDashboard()
     dashboard.render_dashboard()
-
-
-if __name__ == "__main__":
-    main()
