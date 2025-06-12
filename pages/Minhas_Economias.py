@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from componentes.profile_pic_component import boas_vindas_com_foto
-from utils.pluggy_connector import PluggyConnector
+from utils.ofx_reader import OFXReader
 from utils.auth import verificar_autenticacao
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario, calcular_resumo_financeiro
@@ -21,26 +21,39 @@ st.title("💰 Minhas Economias")
 
 # Função otimizada com cache
 @st.cache_resource(ttl=300)
-def get_pluggy_connector():
-    return PluggyConnector()
+def get_ofx_reader():
+    return OFXReader()
 
 @st.cache_data(ttl=600)
 def carregar_dados_economias(usuario):
     """Carrega dados de economias com cache para performance"""
     def _carregar_dados():
-        pluggy = get_pluggy_connector()
-        itemids_data = pluggy.load_itemids_db(usuario) if usuario else None
+        ofx_reader = get_ofx_reader()
         
-        if itemids_data:
-            df = pluggy.buscar_extratos(itemids_data)
-            saldos_info = pluggy.obter_saldo_atual(itemids_data)
-            return saldos_info, df
-        return None, pd.DataFrame()
+        # Carregar dados dos arquivos OFX
+        df_extratos = ofx_reader.buscar_extratos()
+        df_cartoes = ofx_reader.buscar_cartoes()
+        
+        # Combinar extratos e cartões
+        df = pd.concat([df_extratos, df_cartoes], ignore_index=True) if not df_extratos.empty or not df_cartoes.empty else pd.DataFrame()
+        
+        # Calcular saldos por origem
+        saldos_info = {}
+        if not df.empty:
+            for origem in df['Origem'].unique():
+                df_origem = df[df['Origem'] == origem]
+                saldo = df_origem['Valor'].sum()
+                saldos_info[origem] = {
+                    'saldo': saldo,
+                    'tipo': 'credit_card' if 'fatura' in origem.lower() or 'nubank' in origem.lower() else 'checking'
+                }
+        
+        return saldos_info, df
     
     return ExceptionHandler.safe_execute(
         func=_carregar_dados,
-        error_handler=ExceptionHandler.handle_pluggy_error,
-        default_return=(None, pd.DataFrame()),
+        error_handler=ExceptionHandler.handle_generic_error,
+        default_return=({}, pd.DataFrame()),
         show_in_streamlit=True
     )
 
@@ -50,9 +63,13 @@ with st.spinner("Carregando dados financeiros..."):
     saldos_info, df = carregar_dados_economias(usuario)
 
 if df.empty:
-    st.warning("⚠️ Nenhuma movimentação encontrada!")
-    if st.button("➕ Conectar Contas"):
-        st.switch_page("pages/Cadastro_Pluggy.py")
+    st.warning("📭 Nenhuma transação encontrada nos arquivos OFX!")
+    st.info("💡 **Como adicionar dados:**")
+    st.markdown("""
+    1. 📁 Coloque seus extratos (.ofx) na pasta `extratos/`
+    2. 💳 Coloque suas faturas de cartão (.ofx) na pasta `faturas/`
+    3. 🔄 Atualize a página
+    """)
     st.stop()
 
 # Pré-processamento básico
@@ -65,12 +82,37 @@ start_date, end_date = filtro_data(df, "economias")
 categorias_selecionadas = filtro_categorias(df, "Filtrar por Categorias", "economias")
 df_filtrado = aplicar_filtros(df, start_date, end_date, categorias_selecionadas)
 
-# Resumo financeiro atual
-if saldos_info and len(saldos_info) >= 3:
-    saldo_positivo, saldo_negativo, contas_detalhes = saldos_info[:3]
+# Resumo financeiro atual baseado nos saldos calculados
+if saldos_info:
+    st.subheader("💰 Saldos por Conta")
+    
+    saldo_total_positivo = 0
+    saldo_total_negativo = 0
+    
+    cols = st.columns(len(saldos_info))
+    
+    for i, (origem, info) in enumerate(saldos_info.items()):
+        saldo = info['saldo']
+        tipo = info['tipo']
+        
+        if saldo >= 0:
+            saldo_total_positivo += saldo
+        else:
+            saldo_total_negativo += saldo
+        
+        # Ícone baseado no tipo de conta
+        icone = "💳" if tipo == "credit_card" else "🏦"
+        
+        with cols[i]:
+            st.metric(
+                f"{icone} {origem.split('.')[0]}", 
+                formatar_valor_monetario(saldo)
+            )
+    
+    # Resumo geral
     col1, col2 = st.columns(2)
-    col1.metric("🟢 Ativos", formatar_valor_monetario(saldo_positivo))
-    col2.metric("🔴 Passivos", formatar_valor_monetario(abs(saldo_negativo)))
+    col1.metric("🟢 Total Positivo", formatar_valor_monetario(saldo_total_positivo))
+    col2.metric("🔴 Total Negativo", formatar_valor_monetario(abs(saldo_total_negativo)))
 
 # Resumo do período filtrado
 resumo = calcular_resumo_financeiro(df_filtrado)

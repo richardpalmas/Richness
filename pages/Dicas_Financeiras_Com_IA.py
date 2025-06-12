@@ -25,7 +25,7 @@ try:
     from componentes.profile_pic_component import boas_vindas_com_foto
     from utils.auth import verificar_autenticacao
     from utils.formatacao import formatar_valor_monetario
-    from utils.pluggy_connector import PluggyConnector
+    from utils.ofx_reader import OFXReader
     from utils.exception_handler import ExceptionHandler
 except ImportError as e:
     st.error(f"Erro ao importar módulos do projeto: {e}")
@@ -161,7 +161,6 @@ class FinancialAIService:
 
     def analyze_financial_data(self, financial_data: Dict) -> str:
         """Analisa dados financeiros usando IA"""
-        # Diagnóstico: Verificar se dados do Pluggy vieram com erro
         if "error" in financial_data:
             raise RuntimeError(f"Erro ao buscar dados financeiros: {financial_data['error']}")
 
@@ -221,18 +220,16 @@ financial_service = FinancialAIService(ai_manager)
 def get_financial_data(user_id: str) -> Dict[str, Any]:
     """Busca dados financeiros do usuário com cache"""
     try:
-        pluggy = PluggyConnector()
-        
-        # Buscar dados do usuário
-        itemids_data = pluggy.load_itemids_db(user_id)
-        if not itemids_data:
-            return {"error": "Nenhuma conta conectada encontrada"}
+        ofx_reader = OFXReader()
         
         # Buscar dados dos últimos 4 meses
-        df_extratos = pluggy.buscar_extratos(itemids_data, dias=120)
-        df_cartoes = pluggy.buscar_cartoes(itemids_data, dias=120)
+        df_extratos = ofx_reader.buscar_extratos(dias=120)
+        df_cartoes = ofx_reader.buscar_cartoes(dias=120)
         
-        # Análise básica
+        # Verificar se há dados
+        if df_extratos.empty and df_cartoes.empty:
+            return {"error": "Nenhum dado financeiro encontrado nos arquivos OFX"}
+          # Análise básica
         analysis = {
             "total_transactions": len(df_extratos) + len(df_cartoes),
             "period_days": 120,

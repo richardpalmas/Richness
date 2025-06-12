@@ -74,7 +74,6 @@ class ExceptionHandler:
     @staticmethod
     def handle_pluggy_error(error: Exception) -> str:
         """
-        Trata erros específicos da API Pluggy de forma padronizada.
         
         Args:
             error: Exceção capturada
@@ -86,7 +85,6 @@ class ExceptionHandler:
         
         if "403" in error_msg or "Forbidden" in error_msg:
             return (
-                "❌ **Acesso negado à API Pluggy**\n\n"
                 "💡 **Solução**:\n"
                 "1. Verifique suas credenciais\n"
                 "2. Confirme se o item ID é válido\n"
@@ -95,10 +93,8 @@ class ExceptionHandler:
         
         elif "401" in error_msg or "Unauthorized" in error_msg:
             return (
-                "❌ **Credenciais Pluggy inválidas**\n\n"
                 "💡 **Solução**:\n"
                 "1. Verifique as credenciais no arquivo .env\n"
-                "2. Reautentique com a API Pluggy"
             )
         
         elif "429" in error_msg or "rate_limit" in error_msg:

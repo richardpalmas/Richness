@@ -9,7 +9,7 @@ from database import get_connection
 from utils.auth import verificar_autenticacao
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario
-from utils.pluggy_connector import PluggyConnector
+from utils.ofx_reader import OFXReader
 from utils.exception_handler import ExceptionHandler
 
 # Configuração da página
@@ -25,48 +25,10 @@ if usuario:
 
 st.title("💳 Cartão de Crédito")
 
-# Cache do conector
+# Cache do leitor OFX
 @st.cache_resource(ttl=300)
-def get_pluggy_connector():
-    return PluggyConnector()
-
-# Funções auxiliares otimizadas
-@st.cache_data(ttl=300)
-def get_usuario_id(usuario):
-    """Obter ID do usuário com cache"""
-    def _get_user_id():
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute('SELECT id FROM usuarios WHERE usuario = ?', (usuario,))
-        row = cur.fetchone()
-        return row[0] if row else None
-    
-    return ExceptionHandler.safe_execute(
-        func=_get_user_id,
-        error_handler=ExceptionHandler.handle_database_error,
-        default_return=None
-    )
-
-@st.cache_data(ttl=300)
-def load_items_db(usuario):
-    """Carregar itemIds do usuário com cache"""
-    def _load_items():
-        usuario_id = get_usuario_id(usuario)
-        if usuario_id is None:
-            return []
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute('SELECT item_id, nome FROM pluggy_items WHERE usuario_id = ?', (usuario_id,))
-        return [{'item_id': row['item_id'], 'nome': row['nome']} for row in cur.fetchall()]
-    
-    return ExceptionHandler.safe_execute(
-        func=_load_items,
-        error_handler=ExceptionHandler.handle_database_error,
-        default_return=[]
-    )
-
-# Carregar dados
-itemids_data = load_items_db(usuario)
+def get_ofx_reader():
+    return OFXReader()
 
 # Interface de seleção simplificada
 st.subheader("📅 Período de Análise")
@@ -81,140 +43,212 @@ with col1:
 with col2:
     data_fim = st.date_input("Data final", value=data_atual)
 
-st.subheader("💳 Selecionar Cartões")
-if itemids_data:
-    opcoes = [f"{item['nome']}" for item in itemids_data]
-    selecionados = st.multiselect("Escolha seus cartões:", opcoes, default=opcoes)
-    item_ids = [item['item_id'] for item in itemids_data if item['nome'] in selecionados]
-else:
-    st.warning("⚠️ Nenhuma conexão Pluggy encontrada!")
-    if st.button("➕ Conectar Cartões"):
-        st.switch_page("pages/Cadastro_Pluggy.py")
+# Obter leitor OFX
+ofx_reader = get_ofx_reader()
+
+# Verificar arquivos disponíveis
+resumo_arquivos = ofx_reader.get_resumo_arquivos()
+
+st.subheader("💳 Arquivos de Fatura Disponíveis")
+if resumo_arquivos['total_faturas'] == 0:
+    st.warning("⚠️ Nenhuma fatura de cartão encontrada!")
+    st.info("💡 **Como adicionar faturas:**")
+    st.markdown("""
+    1. 📁 Baixe suas faturas de cartão em formato .ofx do seu banco
+    2. 📂 Coloque os arquivos na pasta `faturas/`
+    3. 🔄 Atualize a página
+    """)
     st.stop()
 
-# Validação
-if not item_ids:
-    st.info("👆 Selecione pelo menos um cartão para continuar.")
-    st.stop()
+# Mostrar informações dos arquivos
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("📄 Total de Faturas", resumo_arquivos['total_faturas'])
+with col2:
+    if resumo_arquivos['periodo_faturas']['inicio']:
+        periodo_texto = f"{resumo_arquivos['periodo_faturas']['inicio']} a {resumo_arquivos['periodo_faturas']['fim']}"
+        st.text(f"Período: {periodo_texto}")
 
 # Buscar dados com cache
 @st.cache_data(ttl=600, show_spinner="Carregando transações...")
-def buscar_dados_cartoes(item_ids_tuple, data_inicio_str, data_fim_str):
-    """Buscar dados dos cartões com cache para período específico"""
-    def _buscar_cartoes():
-        pluggy = get_pluggy_connector()
-        item_data = [{'item_id': item_id, 'nome': item_id} for item_id in item_ids_tuple]
+def carregar_dados_cartoes(dias):
+    """Carregar dados de cartões com cache"""
+    def _load_data():
+        ofx_reader = get_ofx_reader()
+        df = ofx_reader.buscar_cartoes(dias)
         
-        # Calcular número de dias entre as datas
-        from datetime import datetime
-        data_inicio = datetime.strptime(data_inicio_str, '%Y-%m-%d').date()
-        data_fim = datetime.strptime(data_fim_str, '%Y-%m-%d').date()
-        dias = (data_fim - data_inicio).days
+        if not df.empty:
+            # Garantir que as colunas estão no formato correto
+            df["Data"] = pd.to_datetime(df["Data"])
+            df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+            
+            # Remover valores nulos
+            df = df.dropna(subset=["Valor"])
+            
+            # Ordenar por data (mais recente primeiro)
+            df = df.sort_values("Data", ascending=False)
         
-        return pluggy.buscar_cartoes(item_data, dias)
+        return df
     
     return ExceptionHandler.safe_execute(
-        func=_buscar_cartoes,
-        error_handler=ExceptionHandler.handle_pluggy_error,
-        default_return=pd.DataFrame(),
-        show_in_streamlit=True
+        func=_load_data,
+        error_handler=ExceptionHandler.handle_generic_error,
+        default_return=pd.DataFrame()
     )
 
-# Converter para tipos compatíveis com cache
-df = buscar_dados_cartoes(tuple(item_ids), str(data_inicio), str(data_fim))
+# Calcular dias entre as datas
+dias_periodo = (data_fim - data_inicio).days
 
-# Filtrar e verificar dados
-if 'TipoConta' in df.columns:
-    df = df[df['TipoConta'] == 'CREDIT'].drop(columns=['TipoConta'])
+# Carregar dados
+df_cartoes = carregar_dados_cartoes(dias_periodo)
 
-# Verificações de segurança simplificadas
-if df.empty:
-    st.warning("⚠️ Nenhuma transação encontrada para o período selecionado.")
-    st.info("💡 Tente expandir o período de busca ou verificar conexões")
+# Verificar se existem dados
+if df_cartoes.empty:
+    st.warning("📭 Nenhuma transação de cartão encontrada no período selecionado!")
+    st.info("Tente ajustar o período de análise ou verificar se há arquivos de fatura na pasta `faturas/`.")
     st.stop()
 
-# Verificar colunas obrigatórias
-required_columns = ['Data', 'Valor']
-missing_columns = [col for col in required_columns if col not in df.columns]
-if missing_columns:
-    st.error(f"❌ Colunas obrigatórias ausentes: {missing_columns}")
+# Aplicar filtro de data aos dados carregados
+df_cartoes_filtrado = df_cartoes[
+    (df_cartoes["Data"].dt.date >= data_inicio) & 
+    (df_cartoes["Data"].dt.date <= data_fim)
+]
+
+if df_cartoes_filtrado.empty:
+    st.warning("🔍 Nenhuma transação encontrada no período selecionado.")
     st.stop()
 
-# Preparação otimizada dos dados
-df = df.drop("ID", axis=1) if "ID" in df.columns else df
-df["Data"] = pd.to_datetime(df["Data"])
-df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce')
-
-# Filtrar por período selecionado (garantia adicional)
-df = df[(df['Data'].dt.date >= data_inicio) & (df['Data'].dt.date <= data_fim)]
-
-# Aplicação de filtros otimizada
-st.sidebar.header("🔍 Filtros")
-categorias_selecionadas = filtro_categorias(df, "Filtrar por Categorias", "cartao")
-df_filtered = df[df["Categoria"].isin(categorias_selecionadas)] if categorias_selecionadas else df
-
-if df_filtered.empty:
-    st.warning("❌ Nenhuma transação encontrada com os filtros atuais.")
-    st.stop()
-
-# 📊 Resumo financeiro
-despesas = df_filtered["Valor"].sum()
+# Filtros adicionais
+st.subheader("🔍 Filtros Avançados")
 col1, col2 = st.columns(2)
-col1.metric("💰 Total de Gastos", formatar_valor_monetario(abs(despesas)))
-col2.metric("📄 Transações", len(df_filtered))
 
-# 📋 Tabela de transações
-st.subheader("📋 Transações do Cartão")
-df_formatado = formatar_df_monetario(df_filtered, "Valor")
-st.dataframe(
-    df_formatado[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
-        columns={"ValorFormatado": "Valor"}
-    ),
-    use_container_width=True
-)
+with col2:
+    categorias_selecionadas = filtro_categorias(df_cartoes_filtrado)
 
-# 📊 Gráficos otimizados
+# Aplicar filtros
+df_final = aplicar_filtros(df_cartoes_filtrado, data_inicio, data_fim, categorias_selecionadas)
+
+if df_final.empty:
+    st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
+    st.stop()
+
+# Resumo financeiro
+st.subheader("📊 Resumo do Cartão")
+
+# Calcular métricas
+total_gastos = df_final["Valor"].sum()
+num_transacoes = len(df_final)
+gasto_medio = total_gastos / num_transacoes if num_transacoes > 0 else 0
+maior_gasto = df_final["Valor"].min() if not df_final.empty else 0  # Min porque valores negativos
+
+# Exibir métricas
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric(
+        "💸 Total de Gastos", 
+        formatar_valor_monetario(abs(total_gastos))
+    )
+
+with col2:
+    st.metric(
+        "📊 Número de Transações", 
+        f"{num_transacoes:,}"
+    )
+
+with col3:
+    st.metric(
+        "💰 Gasto Médio", 
+        formatar_valor_monetario(abs(gasto_medio))
+    )
+
+with col4:
+    st.metric(
+        "🔥 Maior Gasto", 
+        formatar_valor_monetario(abs(maior_gasto))
+    )
+
+# Gráficos de análise
+st.subheader("📈 Análises")
+
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("📊 Gastos por Categoria")
-    category_data = df_filtered.groupby("Categoria")["Valor"].sum().abs().reset_index()
-    
-    if not category_data.empty:
-        fig = px.pie(
-            category_data,
+    # Gráfico de gastos por categoria
+    if "Categoria" in df_final.columns:
+        categoria_gastos = df_final.groupby("Categoria")["Valor"].sum().reset_index()
+        categoria_gastos["Valor_Abs"] = categoria_gastos["Valor"].abs()
+        categoria_gastos = categoria_gastos.sort_values("Valor_Abs", ascending=False)
+        
+        fig_categorias = px.pie(
+            categoria_gastos,
             names="Categoria",
-            values="Valor",
-            title="Distribuição por Categoria",
-            hole=0.3
+            values="Valor_Abs",
+            title="Gastos por Categoria",
+            template="plotly_white"
         )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("📊 Sem dados para gráfico")
+        
+        fig_categorias.update_layout(height=400)
+        st.plotly_chart(fig_categorias, use_container_width=True)
 
 with col2:
-    st.subheader("📈 Evolução Mensal")
-    df_filtered["AnoMes"] = df_filtered["Data"].dt.strftime("%Y-%m")
-    monthly_data = df_filtered.groupby("AnoMes")["Valor"].sum().abs().reset_index()
+    # Gráfico de evolução temporal
+    df_temp = df_final.copy()
+    df_temp["Mes"] = df_temp["Data"].dt.to_period("M").astype(str)
+    evolucao_mensal = df_temp.groupby("Mes")["Valor"].sum().reset_index()
+    evolucao_mensal["Valor_Abs"] = evolucao_mensal["Valor"].abs()
     
-    if not monthly_data.empty:
-        fig2 = px.line(monthly_data, x="AnoMes", y="Valor", markers=True, title="Gastos por Mês")
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("📈 Sem dados para evolução")
-
-# 🏆 Top 5 Maiores Gastos otimizado
-st.subheader("🏆 Top 5 Maiores Gastos")
-top_gastos = df_filtered.copy()
-top_gastos["ValorAbs"] = top_gastos["Valor"].abs()
-top_gastos = formatar_df_monetario(top_gastos, "ValorAbs").sort_values("ValorAbs", ascending=False).head(5)
-
-if not top_gastos.empty:
-    st.dataframe(
-        top_gastos[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
-            columns={"ValorFormatado": "Valor"}
-        ),
-        use_container_width=True
+    fig_evolucao = px.bar(
+        evolucao_mensal,
+        x="Mes",
+        y="Valor_Abs",
+        title="Gastos Mensais",
+        template="plotly_white"
     )
-else:
-    st.info("🏆 Nenhum gasto registrado para o período")
+    
+    fig_evolucao.update_layout(height=400)
+    st.plotly_chart(fig_evolucao, use_container_width=True)
+
+# Top gastos
+st.subheader("🔝 Maiores Gastos")
+top_gastos = df_final.nsmallest(10, "Valor")[["Data", "Descrição", "Valor", "Categoria"]]
+top_gastos["Valor"] = top_gastos["Valor"].abs()
+top_gastos = formatar_df_monetario(top_gastos)
+
+st.dataframe(top_gastos, use_container_width=True)
+
+# Tabela completa de transações
+st.subheader("📋 Todas as Transações")
+
+# Preparar dados para exibição
+df_display = df_final.copy()
+df_display["Valor"] = df_display["Valor"].abs()  # Mostrar valores positivos
+df_display = formatar_df_monetario(df_display)
+
+# Paginação simples
+num_registros = st.selectbox(
+    "Registros por página:", 
+    [25, 50, 100, 200], 
+    index=1
+)
+
+st.dataframe(
+    df_display.head(num_registros),
+    use_container_width=True,
+    height=400
+)
+
+# Informações adicionais
+with st.expander("ℹ️ Informações Técnicas"):
+    st.write(f"**Período analisado:** {data_inicio} a {data_fim}")
+    st.write(f"**Total de registros:** {len(df_final):,}")
+    st.write(f"**Arquivos processados:** {resumo_arquivos['total_faturas']} faturas")
+    
+    if resumo_arquivos['periodo_faturas']['inicio']:
+        st.write(f"**Período dos arquivos:** {resumo_arquivos['periodo_faturas']['inicio']} a {resumo_arquivos['periodo_faturas']['fim']}")
+    
+    # Botão para limpar cache
+    if st.button("🧹 Limpar Cache"):
+        ofx_reader.limpar_cache()
+        st.cache_data.clear()
+        st.success("Cache limpo! Recarregue a página para ver os dados atualizados.")
