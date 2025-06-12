@@ -274,35 +274,7 @@ if carregamento_rapido:
 else:
     os.environ["SKIP_LLM_PROCESSING"] = "false"
 
-# Botão de atualização de dados
-if st.sidebar.button("🔄 Atualizar Dados", help="Reprocessa arquivos OFX para buscar novas transações"):
-    ofx_reader = OFXReader()
-    
-    # Exibir status de carregamento
-    with st.sidebar:
-        status_container = st.empty()
-        status_container.info("🔄 Reprocessando arquivos OFX...")
-    
-    def _update_data():
-        try:
-            # Limpar cache para forçar releitura dos arquivos
-            ofx_reader.limpar_cache()
-            
-            # Obter resumo dos arquivos disponíveis
-            resumo = ofx_reader.get_resumo_arquivos()
-            
-            status_container.success(f"✅ Encontrados {resumo['total_extratos']} extratos e {resumo['total_faturas']} faturas")
-            
-            # Limpar cache do Streamlit para atualizar dados na interface
-            st.cache_data.clear()
-            
-            time.sleep(1)
-            status_container.success("✅ Dados atualizados com sucesso!")
-            
-        except Exception as e:
-            status_container.error(f"❌ Erro ao atualizar: {str(e)}")
-    
-    _update_data()
+
     
     # Recarregar página para mostrar dados atualizados
     st.rerun()
@@ -318,16 +290,7 @@ if carregamento_rapido:
         st.sidebar.success("Processamento com IA concluído!")
         st.rerun()
 
-# Remover Usuário
-if st.sidebar.button("🗑️ Remover Usuário", type="secondary"):
-    if st.sidebar.button("⚠️ Confirmar Remoção", type="primary"):
-        if remover_usuario(usuario):
-            st.sidebar.success("✅ Usuário removido com sucesso!")
-            st.session_state.clear()
-            time.sleep(1)
-            st.switch_page("pages/Cadastro.py")
-        else:
-            st.sidebar.error("❌ Erro ao remover usuário")
+
 
 # Carregar dados principais
 saldos_info, df = carregar_dados_home(usuario)
@@ -392,32 +355,6 @@ with col4:
         len(df),
         delta=None
     )
-
-# Botão de atualização rápida de saldos
-col1, col2, col3 = st.columns([1, 1, 1])
-if col3.button("🔄", help="Atualizar saldos", key="refresh_balance"):
-    with st.spinner("Atualizando saldos..."):
-        def _refresh_saldos():
-            # Forçar refresh apenas dos saldos
-            ofx_reader = get_ofx_reader()
-            ofx_reader.limpar_cache()
-            
-            # Limpar cache específico dos saldos
-            st.cache_data.clear()
-            
-            # Carregar dados com force_refresh
-            saldos_info_atualizado, _ = carregar_dados_home(usuario, force_refresh=True)
-            
-            if saldos_info_atualizado:
-                st.success("✅ Saldos atualizados!")
-                time.sleep(1)
-                return True
-            else:
-                st.error("❌ Erro ao atualizar saldos")
-                return False
-        
-        if _refresh_saldos():
-            st.rerun()
 
 # Filtros
 st.subheader("🔍 Filtros")
