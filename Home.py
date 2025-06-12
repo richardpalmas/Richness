@@ -372,7 +372,7 @@ with col2:
     )
 
 with col3:
-    saldo_liquido = resumo["saldo_liquido"]
+    saldo_liquido = resumo["saldo"]
     delta_color = "normal" if saldo_liquido >= 0 else "inverse"
     st.metric(
         "💳 Saldo Líquido", 
@@ -383,7 +383,7 @@ with col3:
 with col4:
     st.metric(
         "📈 Total de Transações", 
-        resumo["total_transacoes"],
+        len(df),
         delta=None
     )
 
