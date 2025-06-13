@@ -55,6 +55,8 @@ CATEGORIAS_DISPONIVEIS = [
 CACHE_CATEGORIAS_FILE = "cache_categorias_usuario.json"
 CATEGORIAS_PERSONALIZADAS_FILE = "categorias_personalizadas.json"
 TRANSACOES_EXCLUIDAS_FILE = "transacoes_excluidas.json"
+DESCRICOES_PERSONALIZADAS_FILE = "descricoes_personalizadas.json"
+TRANSACOES_MANUAIS_FILE = "transacoes_manuais.json"
 
 def carregar_cache_categorias():
     """Carrega o cache de categorizações personalizadas do usuário"""
@@ -104,7 +106,7 @@ def get_todas_categorias():
 
 @st.cache_data(ttl=300)
 def carregar_transacoes():
-    """Carrega todas as transações disponíveis"""
+    """Carrega todas as transações disponíveis (OFX + manuais)"""
     def _load_data():
         ofx_reader = OFXReader()
         
@@ -113,7 +115,21 @@ def carregar_transacoes():
         df_cartoes = ofx_reader.buscar_cartoes()
         
         # Combinar extratos e cartões
-        df = pd.concat([df_extratos, df_cartoes], ignore_index=True) if not df_extratos.empty or not df_cartoes.empty else pd.DataFrame()
+        df_ofx = pd.concat([df_extratos, df_cartoes], ignore_index=True) if not df_extratos.empty or not df_cartoes.empty else pd.DataFrame()
+        
+        # Carregar transações manuais
+        transacoes_manuais = carregar_transacoes_manuais()
+        df_manuais = converter_transacoes_manuais_para_df(transacoes_manuais)
+        
+        # Combinar transações OFX e manuais
+        if not df_ofx.empty and not df_manuais.empty:
+            df = pd.concat([df_ofx, df_manuais], ignore_index=True)
+        elif not df_ofx.empty:
+            df = df_ofx
+        elif not df_manuais.empty:
+            df = df_manuais
+        else:
+            df = pd.DataFrame()
         
         if not df.empty:
             df["Data"] = pd.to_datetime(df["Data"])
@@ -206,6 +222,140 @@ def filtrar_transacoes_excluidas(df):
     df_filtrado = df[df.apply(nao_esta_excluida, axis=1)]
     return df_filtrado
 
+# Funções para gerenciar descrições personalizadas
+def carregar_descricoes_personalizadas():
+    """Carrega o cache de descrições personalizadas do usuário"""
+    if os.path.exists(DESCRICOES_PERSONALIZADAS_FILE):
+        try:
+            with open(DESCRICOES_PERSONALIZADAS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def salvar_descricoes_personalizadas(descricoes):
+    """Salva o cache de descrições personalizadas"""
+    try:
+        with open(DESCRICOES_PERSONALIZADAS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(descricoes, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar descrições personalizadas: {e}")
+        return False
+
+def obter_descricao_personalizada(row):
+    """Obtém a descrição personalizada de uma transação, se existir"""
+    descricoes = carregar_descricoes_personalizadas()
+    hash_transacao = gerar_hash_transacao(row)
+    return descricoes.get(hash_transacao, "")
+
+def salvar_descricao_personalizada(row, descricao):
+    """Salva uma descrição personalizada para uma transação"""
+    descricoes = carregar_descricoes_personalizadas()
+    hash_transacao = gerar_hash_transacao(row)
+    
+    if descricao.strip():
+        # Limitar a 250 caracteres
+        descricao = descricao.strip()[:250]
+        descricoes[hash_transacao] = descricao
+    else:
+        # Remover descrição se estiver vazia
+        descricoes.pop(hash_transacao, None)
+    
+    return salvar_descricoes_personalizadas(descricoes)
+
+def remover_descricao_personalizada(row):
+    """Remove a descrição personalizada de uma transação"""
+    descricoes = carregar_descricoes_personalizadas()
+    hash_transacao = gerar_hash_transacao(row)
+    
+    if hash_transacao in descricoes:
+        descricoes.pop(hash_transacao)
+        return salvar_descricoes_personalizadas(descricoes)
+    
+    return True  # Já estava removida
+
+# Funções para gerenciar transações manuais
+def carregar_transacoes_manuais():
+    """Carrega as transações manuais criadas pelo usuário"""
+    if os.path.exists(TRANSACOES_MANUAIS_FILE):
+        try:
+            with open(TRANSACOES_MANUAIS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def salvar_transacoes_manuais(transacoes):
+    """Salva as transações manuais"""
+    try:
+        with open(TRANSACOES_MANUAIS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(transacoes, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar transações manuais: {e}")
+        return False
+
+def gerar_id_transacao_manual():
+    """Gera um ID único para uma nova transação manual"""
+    import uuid
+    return f"manual_{uuid.uuid4().hex[:8]}"
+
+def adicionar_transacao_manual(data, descricao, valor, categoria, descricao_personalizada="", tipo_pagamento="Espécie"):
+    """Adiciona uma nova transação manual"""
+    transacoes_manuais = carregar_transacoes_manuais()
+    
+    # Criar nova transação
+    nova_transacao = {
+        "id": gerar_id_transacao_manual(),
+        "data": data.strftime("%Y-%m-%d"),
+        "descricao": descricao.strip(),
+        "valor": float(valor),
+        "categoria": categoria,
+        "tipo": "DEBIT" if valor < 0 else "CREDIT",
+        "origem": "Manual",
+        "tipo_pagamento": tipo_pagamento,
+        "data_criacao": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    # Adicionar descrição personalizada se fornecida
+    if descricao_personalizada.strip():
+        nova_transacao["descricao_personalizada"] = descricao_personalizada.strip()[:250]
+    
+    transacoes_manuais.append(nova_transacao)
+    
+    return salvar_transacoes_manuais(transacoes_manuais)
+
+def remover_transacao_manual(transacao_id):
+    """Remove uma transação manual pelo ID"""
+    transacoes_manuais = carregar_transacoes_manuais()
+    transacoes_atualizadas = [t for t in transacoes_manuais if t.get("id") != transacao_id]
+    
+    if len(transacoes_atualizadas) != len(transacoes_manuais):
+        return salvar_transacoes_manuais(transacoes_atualizadas)
+    
+    return False  # Transação não encontrada
+
+def converter_transacoes_manuais_para_df(transacoes_manuais):
+    """Converte a lista de transações manuais para DataFrame no formato padrão"""
+    if not transacoes_manuais:
+        return pd.DataFrame()
+    
+    dados = []
+    for transacao in transacoes_manuais:
+        dados.append({
+            "Data": pd.to_datetime(transacao["data"]),
+            "Descrição": transacao["descricao"],
+            "Valor": transacao["valor"],
+            "Categoria": transacao["categoria"],
+            "Tipo": transacao["tipo"],
+            "Origem": transacao["origem"],
+            "Id": transacao["id"],
+            "tipo_pagamento": transacao.get("tipo_pagamento", "Espécie"),
+            "data_criacao": transacao.get("data_criacao", "")
+        })
+    
+    return pd.DataFrame(dados)
 # Interface principal
 st.title("🏷️ Gerenciar Transações")
 st.markdown("**Corrija e personalize a categorização das suas transações**")
@@ -222,7 +372,7 @@ if df.empty:
 df = filtrar_transacoes_excluidas(df)
 
 # Métricas de resumo
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 
 with col1:
     st.metric("📊 Total de Transações", len(df))
@@ -232,14 +382,22 @@ with col2:
     st.metric("🏷️ Categorizações Personalizadas", len(cache))
 
 with col3:
+    descricoes = carregar_descricoes_personalizadas()
+    st.metric("📝 Descrições Personalizadas", len(descricoes))
+
+with col4:
     transacoes_excluidas = carregar_transacoes_excluidas()
     st.metric("🗑️ Transações Excluídas", len(transacoes_excluidas))
 
-with col4:
+with col5:
+    transacoes_manuais = carregar_transacoes_manuais()
+    st.metric("➕ Transações Manuais", len(transacoes_manuais))
+
+with col6:
     receitas = len(df[df["Valor"] > 0])
     st.metric("📈 Receitas", receitas)
 
-with col5:
+with col7:
     despesas = len(df[df["Valor"] < 0])
     st.metric("📉 Despesas", despesas)
 
@@ -304,6 +462,200 @@ with st.expander("➕ Criar Nova Categoria"):
                         
                         st.success(f"✅ Categoria '{categoria}' removida!")
                         st.rerun()
+
+# Seção de adicionar transação manual
+st.subheader("➕ Adicionar Transação Manual")
+with st.expander("💰 Registrar Nova Transação (Espécie/Outros)", expanded=False):
+    st.markdown("**Use esta funcionalidade para registrar transações em dinheiro, presentes recebidos, vendas, ou qualquer movimentação financeira que não aparece nos extratos bancários.**")
+    
+    with st.form("nova_transacao_manual"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Data da transação
+            data_transacao = st.date_input(
+                "📅 Data da Transação",
+                value=datetime.now().date(),
+                max_value=datetime.now().date(),
+                help="Selecione a data em que a transação ocorreu"
+            )
+            
+            # Tipo de transação
+            tipo_transacao_manual = st.selectbox(
+                "📊 Tipo de Transação",
+                options=["💸 Despesa", "💰 Receita"],
+                help="Selecione se é uma entrada ou saída de dinheiro"
+            )
+            
+            # Categoria
+            categoria_manual = st.selectbox(
+                "🏷️ Categoria",
+                options=get_todas_categorias(),
+                help="Escolha a categoria que melhor descreve esta transação"
+            )
+        
+        with col2:
+            # Descrição
+            descricao_manual = st.text_input(
+                "📝 Descrição",
+                placeholder="Ex: Compra no mercado, Venda de produto, Presente recebido...",
+                max_chars=100,
+                help="Descreva a transação de forma clara e objetiva"
+            )
+            
+            # Valor
+            valor_manual = st.number_input(
+                "💵 Valor (R$)",
+                min_value=0.01,
+                value=0.01,
+                step=0.01,
+                format="%.2f",
+                help="Digite o valor da transação em reais"
+            )
+            
+            # Tipo de pagamento
+            tipo_pagamento_manual = st.selectbox(
+                "💳 Forma de Pagamento",
+                options=["Espécie", "PIX", "Transferência", "Cheque", "Outro"],
+                help="Como esta transação foi realizada?"
+            )
+        
+        # Descrição personalizada (opcional)
+        descricao_personalizada_manual = st.text_area(
+            "📋 Observações Detalhadas (Opcional)",
+            placeholder="Adicione detalhes extras, contexto, local, pessoas envolvidas, etc...",
+            max_chars=250,
+            height=80,
+            help="Campo opcional para observações mais detalhadas sobre esta transação"
+        )
+        
+        # Botão de submit
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            submit_transacao = st.form_submit_button(
+                "✅ Adicionar Transação",
+                type="primary",
+                use_container_width=True
+            )
+    
+    # Processar o envio
+    if submit_transacao:
+        # Validações
+        if not descricao_manual.strip():
+            st.error("❌ A descrição da transação é obrigatória.")
+        elif valor_manual <= 0:
+            st.error("❌ O valor deve ser maior que zero.")
+        else:
+            # Ajustar o sinal do valor baseado no tipo
+            valor_final = -abs(valor_manual) if tipo_transacao_manual == "💸 Despesa" else abs(valor_manual)
+            
+            # Adicionar a transação
+            sucesso = adicionar_transacao_manual(
+                data=data_transacao,
+                descricao=descricao_manual,
+                valor=valor_final,
+                categoria=categoria_manual,
+                descricao_personalizada=descricao_personalizada_manual,
+                tipo_pagamento=tipo_pagamento_manual
+            )
+            
+            if sucesso:
+                emoji = "💸" if valor_final < 0 else "💰"
+                st.success(f"✅ {emoji} Transação adicionada com sucesso!")
+                st.balloons()  # Efeito visual de celebração
+                
+                # Limpar cache para recarregar os dados
+                st.cache_data.clear()
+                
+                # Mostrar resumo da transação adicionada
+                with st.container():
+                    st.markdown("**📋 Resumo da transação adicionada:**")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("📅 Data", data_transacao.strftime("%d/%m/%Y"))
+                    
+                    with col2:
+                        st.metric("💵 Valor", f"R$ {abs(valor_final):,.2f}")
+                    
+                    with col3:
+                        st.metric("🏷️ Categoria", categoria_manual)
+                    
+                    with col4:
+                        st.metric("💳 Pagamento", tipo_pagamento_manual)
+                
+                # Sugestão para o usuário
+                st.info("💡 **Dica:** A nova transação já aparece nos filtros e pode ser editada na seção abaixo. Ela também será incluída nos gráficos da página Home.")
+            else:
+                st.error("❌ Erro ao adicionar a transação. Tente novamente.")
+
+# Seção para gerenciar transações manuais existentes
+transacoes_manuais_existentes = carregar_transacoes_manuais()
+if transacoes_manuais_existentes:
+    with st.expander(f"📊 Gerenciar Transações Manuais ({len(transacoes_manuais_existentes)})", expanded=False):
+        st.markdown("**Suas transações manuais registradas:**")
+        
+        # Organizar por data mais recente primeiro
+        transacoes_ordenadas = sorted(transacoes_manuais_existentes, key=lambda x: x["data"], reverse=True)
+        
+        for i, transacao in enumerate(transacoes_ordenadas[:10]):  # Mostrar até 10 mais recentes
+            col1, col2, col3, col4, col5, col6 = st.columns([1.5, 2.5, 1.5, 1.5, 1, 0.8])
+            
+            with col1:
+                data_formatada = datetime.strptime(transacao["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
+                st.text(data_formatada)
+            
+            with col2:
+                descricao_exibida = transacao["descricao"][:35] + ("..." if len(transacao["descricao"]) > 35 else "")
+                st.text(descricao_exibida)
+            
+            with col3:
+                valor = transacao["valor"]
+                valor_formatado = f"R$ {abs(valor):,.2f}"
+                emoji = "💰" if valor > 0 else "💸"
+                st.text(f"{emoji} {valor_formatado}")
+            
+            with col4:
+                st.text(transacao["categoria"])
+            
+            with col5:
+                st.text(transacao.get("tipo_pagamento", "Espécie"))
+            
+            with col6:
+                if st.button("🗑️", key=f"del_manual_{i}", help=f"Remover transação manual"):
+                    if remover_transacao_manual(transacao["id"]):
+                        st.success("✅ Transação removida!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error("❌ Erro ao remover transação")
+        
+        if len(transacoes_manuais_existentes) > 10:
+            st.caption(f"... e mais {len(transacoes_manuais_existentes) - 10} transações manuais")
+        
+        # Estatísticas das transações manuais
+        total_receitas = sum(t["valor"] for t in transacoes_manuais_existentes if t["valor"] > 0)
+        total_despesas = sum(abs(t["valor"]) for t in transacoes_manuais_existentes if t["valor"] < 0)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("💰 Total Receitas Manuais", f"R$ {total_receitas:,.2f}")
+        with col2:
+            st.metric("💸 Total Despesas Manuais", f"R$ {total_despesas:,.2f}")
+        with col3:
+            saldo = total_receitas - total_despesas
+            st.metric("⚖️ Saldo das Manuais", f"R$ {saldo:,.2f}")
+        
+        # Exportar transações manuais
+        st.markdown("---")
+        if st.button("📥 Exportar Transações Manuais", help="Baixar todas as transações manuais em JSON"):
+            export_data = json.dumps(transacoes_manuais_existentes, indent=2, ensure_ascii=False)
+            st.download_button(
+                "💾 Download JSON",
+                data=export_data,
+                file_name=f"transacoes_manuais_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
+            )
 
 # Seção de filtros
 st.subheader("🔍 Filtros")
@@ -469,9 +821,10 @@ inicio = (pagina_atual - 1) * itens_por_pagina
 fim = inicio + itens_por_pagina
 df_pagina = df_display.iloc[inicio:fim]
 
-# Exibir transações com opção de edição e exclusão
+# Exibir transações com opção de edição, exclusão e descrição personalizada
 for idx, row in df_pagina.iterrows():
     with st.container():
+        # Primeira linha: Dados principais da transação
         col1, col2, col3, col4, col5, col6 = st.columns([1.5, 3, 1.5, 2, 0.8, 0.8])
         
         with col1:
@@ -556,6 +909,51 @@ for idx, row in df_pagina.iterrows():
                     if st.button("❌", key=f"confirm_no_{idx}", help="Cancelar exclusão"):
                         st.session_state[f"confirm_delete_{idx}"] = False
                         st.rerun()
+          # Segunda linha: Descrição personalizada
+        col_desc, col_save_desc = st.columns([5, 1])
+        
+        with col_desc:
+            # Obter descrição personalizada existente
+            descricao_atual = obter_descricao_personalizada(row)
+              # Campo de texto para descrição personalizada
+            nova_descricao = st.text_area(
+                "Descrição personalizada",
+                value=descricao_atual,
+                max_chars=250,
+                height=68,
+                key=f"desc_{idx}",
+                label_visibility="collapsed",
+                placeholder="Adicione uma descrição personalizada (máx. 250 caracteres)..."
+            )
+            
+            # Garantir que nova_descricao não seja None
+            if nova_descricao is None:
+                nova_descricao = ""
+            
+            # Mostrar contador de caracteres
+            chars_count = len(nova_descricao)
+            if chars_count > 200:
+                st.caption(f"🔤 {chars_count}/250 caracteres")
+            elif nova_descricao:
+                st.caption(f"📝 {chars_count} caracteres")
+        
+        with col_save_desc:
+            # Botão para salvar descrição
+            nova_descricao = nova_descricao or ""  # Garantir que não seja None
+            if nova_descricao != descricao_atual:
+                if st.button("💾📝", key=f"save_desc_{idx}", help="Salvar descrição"):
+                    if salvar_descricao_personalizada(row, nova_descricao):
+                        if nova_descricao.strip():
+                            st.success("✅ Descrição salva!")
+                        else:
+                            st.success("✅ Descrição removida!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Erro ao salvar descrição")
+            
+            # Mostrar indicador se há descrição
+            elif descricao_atual:
+                st.markdown("📝✅")
         
         st.divider()
 
@@ -704,6 +1102,70 @@ with st.expander("🗑️ Gerenciar Transações Excluídas"):
         st.info("✨ Nenhuma transação foi excluída ainda.")
         st.markdown("Use o botão 🗑️ ao lado das transações para excluí-las temporariamente.")
 
+# Seção de gerenciamento de descrições personalizadas
+with st.expander("📝 Gerenciar Descrições Personalizadas"):
+    descricoes_personalizadas = carregar_descricoes_personalizadas()
+    
+    if descricoes_personalizadas:
+        st.markdown(f"**{len(descricoes_personalizadas)} descrições personalizadas encontradas:**")
+        
+        # Mostrar detalhes das descrições personalizadas
+        df_todas = carregar_transacoes()  # Carregar todas as transações
+        
+        descricoes_detalhes = []
+        for hash_id, descricao in descricoes_personalizadas.items():
+            # Tentar encontrar a transação correspondente
+            for _, row in df_todas.iterrows():
+                if gerar_hash_transacao(row) == hash_id:
+                    descricoes_detalhes.append((row, descricao))
+                    break
+        
+        if descricoes_detalhes:
+            for i, (row, descricao) in enumerate(descricoes_detalhes[:10]):  # Mostrar até 10
+                col1, col2, col3, col4 = st.columns([1.5, 2.5, 3, 0.8])
+                
+                with col1:
+                    st.text(row["Data"].strftime("%d/%m/%Y"))
+                
+                with col2:
+                    st.text(row["Descrição"][:25] + ("..." if len(row["Descrição"]) > 25 else ""))
+                
+                with col3:
+                    st.text(f"📝 {descricao[:40]}{'...' if len(descricao) > 40 else ''}")
+                
+                with col4:
+                    if st.button("🗑️", key=f"remove_desc_{i}", help="Remover descrição"):
+                        if remover_descricao_personalizada(row):
+                            st.success("✅ Descrição removida!")
+                            st.rerun()
+            
+            if len(descricoes_detalhes) > 10:
+                st.caption(f"... e mais {len(descricoes_detalhes) - 10} descrições personalizadas")
+        
+        # Botão para limpar todas as descrições
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🗑️ Remover Todas as Descrições", type="secondary"):
+                if st.button("⚠️ Confirmar Remoção de Todas", type="secondary"):
+                    if salvar_descricoes_personalizadas({}):
+                        st.success(f"✅ {len(descricoes_personalizadas)} descrições removidas!")
+                        st.rerun()
+        
+        with col2:
+            # Exportar descrições personalizadas
+            export_data = json.dumps(descricoes_personalizadas, indent=2, ensure_ascii=False)
+            st.download_button(
+                "📥 Exportar Descrições",
+                data=export_data,
+                file_name=f"descricoes_personalizadas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
+            )
+    else:
+        st.info("✨ Nenhuma descrição personalizada foi adicionada ainda.")
+        st.markdown("Use o campo de texto abaixo de cada transação para adicionar descrições personalizadas.")
+
 # Informações de ajuda
 with st.expander("ℹ️ Como usar esta página"):
     st.markdown("""
@@ -731,16 +1193,30 @@ with st.expander("ℹ️ Como usar esta página"):
     - Digite parte da descrição para encontrar transações similares
     - Aplique uma nova categoria a todas elas de uma vez
     - Use categorias padrão ou suas categorias personalizadas
-    
-    **🗑️ Exclusão de Transações (NOVO):**
+      **🗑️ Exclusão de Transações:**
     - Clique no botão 🗑️ para excluir uma transação temporariamente
     - Confirme a exclusão clicando em ✅ ou cancele com ❌
     - Transações excluídas não aparecem nos gráficos e relatórios
     - Acesse "Gerenciar Transações Excluídas" para restaurar se necessário
+      **📝 Descrições Personalizadas (NOVO):**
+    - Adicione descrições detalhadas de até 250 caracteres a qualquer transação
+    - Use o campo de texto abaixo de cada transação para escrever sua descrição
+    - Clique em 💾📝 para salvar a descrição personalizada
+    - Descrições ajudam a lembrar detalhes importantes sobre a transação
+    - Acesse "Gerenciar Descrições Personalizadas" para ver, editar ou remover todas
+    
+    **➕ Transações Manuais (NOVO):**
+    - Registre transações em dinheiro, presentes, vendas ou qualquer movimentação não bancária
+    - Preencha data, descrição, valor, categoria e forma de pagamento
+    - Adicione observações detalhadas opcionais (até 250 caracteres)
+    - Transações manuais aparecem em todos os relatórios e gráficos
+    - Gerencie suas transações manuais na seção específica
+    - Exporte todas as transações manuais em formato JSON
     
     **🔍 Filtros:**
     - Use os filtros para encontrar transações específicas
     - Filtre por data, categoria ou tipo (receita/despesa)
+    - Filtros aplicados incluem transações manuais e importadas
     
     ### 💡 Dicas para Edição em Lote
     
@@ -754,7 +1230,55 @@ with st.expander("ℹ️ Como usar esta página"):
     **📋 Modo Individual:**
     - Ideal para correções pontuais
     - Cada mudança é salva imediatamente
-    - Não acumula mudanças pendentes
+    - Não acumula mudanças pendentes    ### 📝 Dicas para Descrições Personalizadas
+    
+    **Quando usar:**
+    - Adicionar contexto importante sobre uma transação
+    - Lembrar motivos específicos de um gasto
+    - Anotar detalhes do local ou evento
+    - Registrar observações sobre fornecedores
+    
+    **Exemplos úteis:**
+    - "Jantar de aniversário da Maria"
+    - "Compra de material para projeto X"
+    - "Medicamento prescrito pelo Dr. João"
+    - "Presente para formatura do filho"
+    - "Manutenção preventiva do carro"
+    
+    **Funcionalidades:**
+    - Máximo de 250 caracteres por descrição
+    - Salvamento instantâneo ao clicar 💾📝
+    - Remoção fácil deixando o campo vazio
+    - Contador de caracteres quando próximo do limite
+    - Backup e exportação de todas as descrições
+    
+    ### ➕ Dicas para Transações Manuais
+    
+    **Quando usar:**
+    - Pagamentos em dinheiro (espécie)
+    - Presentes recebidos ou dados
+    - Vendas de produtos pessoais
+    - Reembolsos recebidos
+    - Ganhos extras (freelances, trabalhos eventuais)
+    - Despesas não rastreadas pelo banco
+    
+    **Exemplos práticos:**
+    - "💸 Compra no mercadinho da esquina - R$ 25,00"
+    - "💰 Venda de livros usados - R$ 150,00"
+    - "💸 Presente de aniversário para amigo - R$ 80,00"
+    - "💰 Freelance design de logo - R$ 500,00"
+    - "💸 Lanche na cantina da escola - R$ 12,00"
+    
+    **Categorização inteligente:**
+    - Use as mesmas categorias das transações bancárias
+    - Crie categorias personalizadas se necessário
+    - Transações manuais seguem as mesmas regras de categorização
+    
+    **Organização:**
+    - Registre as transações assim que elas acontecem
+    - Use observações detalhadas para contexto extra
+    - Exporte regularmente como backup
+    - Monitore o saldo manual separadamente
     
     ### 🗑️ Dicas para Exclusão de Transações
     
@@ -775,11 +1299,13 @@ with st.expander("ℹ️ Como usar esta página"):
     - **Hobby**: Coleções, artesanato, instrumentos musicais
     - **Negócios**: Despesas de trabalho freelance
     - **Família**: Presentes, eventos familiares
-    
-    ### ⚠️ Importante
+      ### ⚠️ Importante
     - **Mudanças pendentes** são perdidas se você sair da página sem salvar
     - **Filtros aplicados** não afetam as mudanças pendentes de outras páginas
     - **Categorias personalizadas** são aplicadas em todo o sistema automaticamente
     - **Transações excluídas** não aparecem nos gráficos da página Home
     - **Exclusões são temporárias** e podem ser restauradas a qualquer momento
+    - **Descrições personalizadas** são salvas permanentemente e podem ser exportadas
+    - **Transações manuais** são permanentes e integradas ao sistema completo
+    - **Backup regular** das transações manuais é recomendado via exportação JSON
     """)

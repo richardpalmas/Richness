@@ -3,6 +3,8 @@ import plotly.express as px
 import streamlit as st
 import time
 import os
+import json
+import hashlib
 
 from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection, create_tables, remover_usuario, get_user_role
@@ -226,7 +228,46 @@ def carregar_dados_home(usuario, force_refresh=False):
         df_cartoes = ofx_reader.buscar_cartoes()
         
         # Combinar extratos e cartões
-        df = pd.concat([df_extratos, df_cartoes], ignore_index=True) if not df_extratos.empty or not df_cartoes.empty else pd.DataFrame()
+        df_ofx = pd.concat([df_extratos, df_cartoes], ignore_index=True) if not df_extratos.empty or not df_cartoes.empty else pd.DataFrame()
+        
+        # Carregar transações manuais
+        transacoes_manuais_file = "transacoes_manuais.json"
+        df_manuais = pd.DataFrame()
+        
+        if os.path.exists(transacoes_manuais_file):
+            try:
+                import json
+                with open(transacoes_manuais_file, 'r', encoding='utf-8') as f:
+                    transacoes_manuais = json.load(f)
+                
+                if transacoes_manuais:
+                    dados_manuais = []
+                    for transacao in transacoes_manuais:
+                        dados_manuais.append({
+                            "Data": pd.to_datetime(transacao["data"]),
+                            "Descrição": transacao["descricao"],
+                            "Valor": transacao["valor"],
+                            "Categoria": transacao["categoria"],
+                            "Tipo": transacao["tipo"],
+                            "Origem": transacao["origem"],
+                            "Id": transacao["id"],
+                            "tipo_pagamento": transacao.get("tipo_pagamento", "Espécie"),
+                            "data_criacao": transacao.get("data_criacao", "")
+                        })
+                    
+                    df_manuais = pd.DataFrame(dados_manuais)
+            except:
+                pass  # Em caso de erro, continuar sem transações manuais
+        
+        # Combinar transações OFX e manuais
+        if not df_ofx.empty and not df_manuais.empty:
+            df = pd.concat([df_ofx, df_manuais], ignore_index=True)
+        elif not df_ofx.empty:
+            df = df_ofx
+        elif not df_manuais.empty:
+            df = df_manuais
+        else:
+            df = pd.DataFrame()
         
         # Pré-processamento mínimo
         if not df.empty:
@@ -293,6 +334,80 @@ def carregar_dados_home(usuario, force_refresh=False):
         error_handler=ExceptionHandler.handle_generic_error,
         default_return=({}, pd.DataFrame())
     )
+
+# Funções para descrições personalizadas
+def gerar_hash_transacao(row):
+    """Gera um hash único para identificar uma transação de forma consistente"""
+    data_str = row["Data"].strftime("%Y-%m-%d") if hasattr(row["Data"], 'strftime') else str(row["Data"])
+    chave = f"{data_str}|{row['Descrição']}|{row['Valor']}"
+    return hashlib.md5(chave.encode()).hexdigest()
+
+def carregar_descricoes_personalizadas():
+    """Carrega o cache de descrições personalizadas do usuário"""
+    descricoes_file = "descricoes_personalizadas.json"
+    if os.path.exists(descricoes_file):
+        try:
+            with open(descricoes_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def obter_descricao_personalizada(row):
+    """Obtém a descrição personalizada de uma transação, se existir"""
+    descricoes = carregar_descricoes_personalizadas()
+    hash_transacao = gerar_hash_transacao(row)
+    return descricoes.get(hash_transacao, "Nenhuma descrição disponível")
+
+# Função para formatar DataFrame com descrições personalizadas
+def formatar_df_com_descricoes(df):
+    """Formata o DataFrame adicionando descrições personalizadas e removendo coluna Id"""
+    if df.empty:
+        return df
+    
+    # Criar cópia do DataFrame
+    df_formatado = df.copy()
+    
+    # Aplicar formatação monetária
+    df_formatado = formatar_df_monetario(df_formatado)
+    
+    # Adicionar coluna de descrição personalizada (renomeada para "Nota")
+    df_formatado["Nota"] = df_formatado.apply(obter_descricao_personalizada, axis=1)
+    
+    # Reordenar colunas: Data → Descrição → Valor → Nota → outras
+    colunas_desejadas = []
+    
+    for col in df_formatado.columns:
+        if col.lower() not in ['id', 'index']:  # Excluir colunas de Id
+            colunas_desejadas.append(col)
+    
+    # Criar nova ordem das colunas
+    colunas_ordenadas = []
+    
+    # 1. Adicionar Data (se existir)
+    if "Data" in colunas_desejadas:
+        colunas_ordenadas.append("Data")
+    
+    # 2. Adicionar Descrição (se existir)
+    if "Descrição" in colunas_desejadas:
+        colunas_ordenadas.append("Descrição")
+    
+    # 3. Adicionar Valor (se existir)
+    if "Valor" in colunas_desejadas:
+        colunas_ordenadas.append("Valor")
+    elif "ValorFormatado" in colunas_desejadas:
+        colunas_ordenadas.append("ValorFormatado")
+    
+    # 4. Adicionar Nota (se existir)
+    if "Nota" in colunas_desejadas:
+        colunas_ordenadas.append("Nota")
+    
+    # 5. Adicionar demais colunas na ordem original
+    for col in colunas_desejadas:
+        if col not in colunas_ordenadas:
+            colunas_ordenadas.append(col)
+    
+    return df_formatado[colunas_ordenadas]
 
 # Sidebar - Configurações
 st.sidebar.header("⚙️ Configurações")
@@ -485,8 +600,8 @@ if not df_filtrado.empty:
             despesas_count = len(df_filtrado[df_filtrado["Valor"] < 0])
             st.metric("📈📉 R/D", f"{receitas_count}/{despesas_count}")
         
-        # Tabela formatada
-        df_display_todas = formatar_df_monetario(df_filtrado.head(50))
+        # Tabela formatada com descrições personalizadas
+        df_display_todas = formatar_df_com_descricoes(df_filtrado.head(50))
         st.dataframe(
             df_display_todas,
             use_container_width=True,
@@ -524,8 +639,8 @@ if not df_filtrado.empty:
                     st.metric("📉 Despesas", despesas_cat)
             
             if not df_categoria.empty:
-                # Tabela formatada da categoria
-                df_display_cat = formatar_df_monetario(df_categoria.head(50))
+                # Tabela formatada da categoria com descrições personalizadas
+                df_display_cat = formatar_df_com_descricoes(df_categoria.head(50))
                 st.dataframe(
                     df_display_cat,
                     use_container_width=True,
