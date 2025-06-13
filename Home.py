@@ -455,17 +455,91 @@ if "Data" in df_filtrado.columns:
     )
     st.plotly_chart(fig_evolucao, use_container_width=True)
 
-# Tabela de transações
-st.subheader("📋 Transações Recentes")
+# Tabela de transações com abas por categoria
+st.subheader("📋 Transações do Período")
 
-# Formatação da tabela
-df_display = formatar_df_monetario(df_filtrado.head(50))
+# Obter categorias disponíveis no período filtrado
+if not df_filtrado.empty:
+    categorias_periodo = sorted(df_filtrado["Categoria"].unique())
+    
+    # Criar lista de abas: "Todas" + categorias específicas
+    abas_disponiveis = ["📊 Todas"] + [f"🏷️ {cat}" for cat in categorias_periodo]
+    
+    # Criar abas usando st.tabs
+    tabs = st.tabs(abas_disponiveis)
+    
+    with tabs[0]:  # Aba "Todas"
+        st.markdown("**Todas as transações do período selecionado**")
+        
+        # Mostrar resumo
+        total_transacoes = len(df_filtrado)
+        valor_total = df_filtrado["Valor"].sum()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("💼 Total", total_transacoes)
+        with col2:
+            st.metric("💰 Saldo", formatar_valor_monetario(valor_total))
+        with col3:
+            receitas_count = len(df_filtrado[df_filtrado["Valor"] > 0])
+            despesas_count = len(df_filtrado[df_filtrado["Valor"] < 0])
+            st.metric("📈📉 R/D", f"{receitas_count}/{despesas_count}")
+        
+        # Tabela formatada
+        df_display_todas = formatar_df_monetario(df_filtrado.head(50))
+        st.dataframe(
+            df_display_todas,
+            use_container_width=True,
+            height=400
+        )
+        
+        if len(df_filtrado) > 50:
+            st.caption(f"📄 Exibindo 50 de {len(df_filtrado)} transações (ordenadas por data mais recente)")
+    
+    # Abas para cada categoria
+    for i, categoria in enumerate(categorias_periodo, 1):
+        with tabs[i]:
+            # Filtrar transações da categoria
+            df_categoria = df_filtrado[df_filtrado["Categoria"] == categoria]
+            
+            st.markdown(f"**Transações da categoria: {categoria}**")
+            
+            # Mostrar resumo da categoria
+            total_cat = len(df_categoria)
+            valor_cat = df_categoria["Valor"].sum()
+            receitas_cat = len(df_categoria[df_categoria["Valor"] > 0])
+            despesas_cat = len(df_categoria[df_categoria["Valor"] < 0])
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("💼 Transações", total_cat)
+            with col2:
+                st.metric("💰 Total", formatar_valor_monetario(valor_cat))
+            with col3:
+                if receitas_cat > 0 and despesas_cat > 0:
+                    st.metric("📈📉 R/D", f"{receitas_cat}/{despesas_cat}")
+                elif receitas_cat > 0:
+                    st.metric("📈 Receitas", receitas_cat)
+                else:
+                    st.metric("📉 Despesas", despesas_cat)
+            
+            if not df_categoria.empty:
+                # Tabela formatada da categoria
+                df_display_cat = formatar_df_monetario(df_categoria.head(50))
+                st.dataframe(
+                    df_display_cat,
+                    use_container_width=True,
+                    height=400
+                )
+                
+                if len(df_categoria) > 50:
+                    st.caption(f"📄 Exibindo 50 de {len(df_categoria)} transações desta categoria")
+            else:
+                st.info("📭 Nenhuma transação encontrada nesta categoria para o período selecionado.")
 
-st.dataframe(
-    df_display,
-    use_container_width=True,
-    height=400
-)
+else:
+    st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
+    st.info("💡 Ajuste os filtros de data ou categoria para ver as transações.")
 
 # Informações sobre arquivos OFX
 with st.expander("📁 Informações dos Arquivos OFX"):
