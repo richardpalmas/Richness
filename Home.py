@@ -196,7 +196,6 @@ if st.sidebar.button("🔄 Limpar Cache", help="Limpa cache do sistema"):
 # Inicializar Backend V2 (obrigatório)
 try:
     backend_v2 = init_backend_v2_obrigatorio()
-    st.success("✅ Backend V2 inicializado com sucesso!")
 except Exception as e:
     st.error(f"❌ Erro na inicialização do Backend V2: {e}")
     st.stop()
@@ -209,74 +208,7 @@ if usuario:
     boas_vindas_com_foto(usuario)
 
 # Título principal
-st.title("🚀 Dashboard Financeiro V2")
-st.markdown("**Sistema de nova geração com dados organizados por usuário**")
-
-# Verificar se usuário tem dados no V2
-@st.cache_data(ttl=300)
-def verificar_dados_usuario_v2(usuario):
-    """Verifica se o usuário tem dados no Backend V2"""
-    try:
-        transacao_service = backend_v2['transacao_service']
-        df_transacoes = transacao_service.listar_transacoes_usuario(usuario)
-        
-        if df_transacoes.empty:
-            return {
-                'tem_dados': False,
-                'total_transacoes': 0,
-                'mensagem': 'Nenhuma transação encontrada'
-            }
-        
-        return {
-            'tem_dados': True,
-            'total_transacoes': len(df_transacoes),
-            'mensagem': f'{len(df_transacoes)} transações encontradas'
-        }
-        
-    except Exception as e:
-        return {
-            'tem_dados': False,
-            'total_transacoes': 0,
-            'mensagem': f'Erro ao verificar dados: {str(e)}'
-        }
-
-# Verificar dados do usuário
-dados_status = verificar_dados_usuario_v2(usuario)
-
-if not dados_status['tem_dados']:
-    st.warning("⚠️ **Dados não encontrados no Backend V2**")
-    st.info(f"📋 Status: {dados_status['mensagem']}")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        ### 🔄 Migração Necessária
-        
-        Seus dados precisam ser migrados para o Backend V2.
-        
-        **Execute o comando:**
-        ```bash
-        python migration_to_v2_mandatory.py
-        ```
-        """)
-    
-    with col2:
-        st.markdown("""
-        ### 📁 Upload de Dados
-        
-        Alternativamente, faça upload de novos arquivos OFX:
-        
-        1. Vá para **Atualizar Dados**
-        2. Faça upload dos arquivos OFX
-        3. Os dados serão automaticamente organizados por usuário
-        """)
-    
-    if st.button("🔄 Tentar Recarregar", type="primary"):
-        st.cache_data.clear()
-        st.rerun()
-    
-    st.stop()
+st.title("🚀 Dashboard Financeiro")
 
 # Carregar dados principais do usuário
 @st.cache_data(ttl=600)
@@ -302,55 +234,6 @@ def carregar_dados_v2(usuario, force_refresh=False):
 
 # Carregar dados
 saldos_info, df = carregar_dados_v2(usuario)
-
-# Seção de status do sistema V2
-with st.expander("🔧 Status do Backend V2", expanded=False):
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("🚀 Backend", "V2", "✅ Ativo")
-    
-    with col2:
-        try:
-            monitor = backend_v2.get('monitor')
-            if monitor and hasattr(monitor, 'get_system_health'):
-                health_info = monitor.get_system_health()
-                status = "✅ Saudável" if health_info.get('healthy', False) else "⚠️ Atenção"
-                st.metric("💗 Saúde", status)
-            else:
-                st.metric("💗 Saúde", "✅ OK")
-        except:
-            st.metric("💗 Saúde", "✅ OK")
-    
-    with col3:
-        try:
-            db_manager = backend_v2.get('db_manager')
-            if db_manager and hasattr(db_manager, 'get_cache_stats'):
-                cache_stats = db_manager.get_cache_stats()
-                hit_rate = cache_stats.get('hit_rate', 0)
-                st.metric("⚡ Cache", f"{hit_rate:.1f}%")
-            else:
-                st.metric("⚡ Cache", "✅ Ativo")
-        except:
-            st.metric("⚡ Cache", "✅ Ativo")
-    
-    # Métricas detalhadas
-    if st.checkbox("📊 Métricas detalhadas"):
-        try:
-            monitor = backend_v2.get('monitor')
-            if monitor and hasattr(monitor, 'get_performance_metrics'):
-                metrics = monitor.get_performance_metrics()
-                
-                st.json({
-                    "Conexões ativas": metrics.get('active_connections', 0),
-                    "Queries executadas": metrics.get('total_queries', 0),
-                    "Cache entries": metrics.get('cache_size', 0),
-                    "Uptime": f"{metrics.get('uptime', 0):.1f}s"
-                })
-            else:
-                st.info("📊 Métricas detalhadas não disponíveis no momento")
-        except Exception as e:
-            st.warning(f"⚠️ Métricas temporariamente indisponíveis")
 
 st.markdown("---")
 

@@ -104,13 +104,24 @@ with st.spinner("Carregando dados financeiros..."):
     saldos_info, df = carregar_dados_economias(usuario)
 
 if df.empty:
-    st.warning("📭 Nenhuma transação encontrada nos arquivos OFX!")
-    st.info("💡 **Como adicionar dados:**")
+    st.warning("📭 Nenhuma transação encontrada!")
+    st.info("💡 **Possíveis motivos:**")
     st.markdown("""
-    1. 📁 Coloque seus extratos (.ofx) na pasta `extratos/`
-    2. 💳 Coloque suas faturas de cartão (.ofx) na pasta `faturas/`
-    3. 🔄 Atualize a página
+    1. 📁 Nenhum arquivo foi importado
+    2. 🗓️ O período selecionado não contém transações
+    3. 🔍 Os dados não foram migrados para o Backend V2
     """)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Tentar Recarregar", type="primary"):
+            st.cache_data.clear()
+            st.rerun()
+    
+    with col2:
+        if st.button("📁 Ir para Atualizar Dados"):
+            st.switch_page("pages/Atualizar_Dados.py")
+    
     st.stop()
 
 # Pré-processamento básico

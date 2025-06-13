@@ -28,13 +28,11 @@ Os dados serão isolados e seguros para seu usuário.
 def handle_upload_v2(files, tipo_arquivo, usuario):
     """Processa upload de arquivos OFX usando Backend V2 - VERSÃO MELHORADA"""
     try:
-        # Inicializar Backend V2
+        # Inicializar repositórios
         db_manager = DatabaseManager()
-        user_repo = UsuarioRepository(db_manager)
-        transacao_repo = TransacaoRepository(db_manager)
-        
-        # Obter dados do usuário
-        user_data = user_repo.obter_usuario_por_username(usuario)
+        usuario_repo = UsuarioRepository(db_manager)
+        transacao_repo = TransacaoRepository(db_manager)        # Verificar se usuário existe
+        user_data = usuario_repo.obter_usuario_por_username(usuario)
         if not user_data:
             st.error("❌ Usuário não encontrado")
             return False
@@ -47,17 +45,16 @@ def handle_upload_v2(files, tipo_arquivo, usuario):
         
         arquivos_processados = 0
         total_transacoes = 0
+        arquivos_com_erro = 0
         
         # Processar cada arquivo
         for file in files:
             try:
-                st.info(f"🔄 Processando arquivo: {file.name}")
-                
                 # 1. Salvar arquivo no diretório do usuário
                 file_path = user_dir / file.name
                 with open(file_path, "wb") as f:
                     f.write(file.getbuffer())
-                
+
                 # 2. Processar arquivo OFX e extrair transações
                 try:
                     # Usar o OFXReader existente para fazer parse do arquivo
@@ -69,42 +66,38 @@ def handle_upload_v2(files, tipo_arquivo, usuario):
                     # Fazer parse direto do arquivo
                     parsed_data = ofx_reader._parse_ofx_file(file_path)
                     
-                    if parsed_data and 'transactions' in parsed_data and parsed_data['transactions']:
-                        # 3. Preparar lista de transações para inserir em lote
+                    if parsed_data and len(parsed_data) > 0:
+                        # 3. Converter para formato do banco de dados
                         transacoes_para_inserir = []
                         
-                        for transaction in parsed_data['transactions']:
-                            try:                                # Preparar dados da transação
+                        for transacao in parsed_data:
+                            try:
                                 transacao_data = {
-                                    'data': transaction['data'].strftime('%Y-%m-%d') if hasattr(transaction['data'], 'strftime') else str(transaction['data']),
-                                    'descricao': str(transaction.get('descricao', '')),
-                                    'valor': float(transaction.get('valor', 0.0)),
-                                    'categoria': ofx_reader._categorizar_transacao(transaction.get('descricao', '')),
-                                    'origem': 'ofx_extrato' if tipo_arquivo == 'extratos' else 'ofx_cartao',
-                                    'arquivo_origem': file.name,
-                                    'conta': transaction.get('conta'),
-                                    'tipo': transaction.get('tipo', 'receita' if transaction.get('valor', 0) > 0 else 'despesa')
+                                    'data': transacao.get('data'),
+                                    'descricao': transacao.get('descricao', ''),
+                                    'valor': float(transacao.get('valor', 0)),
+                                    'categoria': transacao.get('categoria', 'Outros'),
+                                    'origem': f"{file.name}",
+                                    'hash_transacao': transacao.get('hash_transacao', ''),
+                                    'tipo_conta': transacao.get('tipo_conta', 'corrente')
                                 }
                                 
                                 transacoes_para_inserir.append(transacao_data)
                                     
                             except Exception as e:
-                                st.warning(f"⚠️ Erro ao preparar transação: {str(e)}")
                                 continue
                         
                         # 4. Inserir transações em lote (mais eficiente)
                         if transacoes_para_inserir:
                             try:
-                                transacoes_inseridas = transacao_repo.criar_transacoes_lote(
+                                transacao_repo.criar_transacoes_lote(
                                     user_id=user_id,
                                     transacoes=transacoes_para_inserir
                                 )
                                 
                                 total_transacoes += len(transacoes_para_inserir)
-                                st.success(f"✅ {file.name}: {len(transacoes_para_inserir)} transações inseridas no banco")
                                 
                             except Exception as e:
-                                st.error(f"❌ Erro ao inserir transações em lote: {str(e)}")
                                 # Fallback: inserir uma por uma
                                 transacoes_inseridas = 0
                                 for transacao_data in transacoes_para_inserir:
@@ -115,52 +108,36 @@ def handle_upload_v2(files, tipo_arquivo, usuario):
                                         )
                                         transacoes_inseridas += 1
                                     except Exception as e_individual:
-                                        st.warning(f"⚠️ Erro ao inserir transação individual: {str(e_individual)}")
                                         continue
                                 
                                 total_transacoes += transacoes_inseridas
-                                st.success(f"✅ {file.name}: {transacoes_inseridas} transações inseridas (fallback individual)")
-                        else:
-                            st.warning(f"⚠️ {file.name}: Nenhuma transação válida encontrada")
-                        
-                    else:
-                        st.warning(f"⚠️ {file.name}: Nenhuma transação encontrada no arquivo OFX")
                     
                 except Exception as e:
-                    st.error(f"❌ Erro ao processar OFX {file.name}: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
-                    # Continuar com próximo arquivo mesmo se um falhar
+                    arquivos_com_erro += 1
                     continue
                 
                 arquivos_processados += 1
                     
             except Exception as e:
-                st.error(f"❌ Erro ao processar arquivo {file.name}: {str(e)}")
+                arquivos_com_erro += 1
                 continue
         
-        # Resultado final
+        # Resultado final - MENSAGEM ÚNICA
         if arquivos_processados > 0:
-            st.success(f"🎉 **PROCESSAMENTO CONCLUÍDO**")
-            st.markdown(f"""
-            - ✅ **{arquivos_processados}** arquivo(s) processado(s)
-            - ✅ **{total_transacoes}** transações inseridas no banco
-            - 📁 Arquivos salvos em: `{user_dir}`
-            - 🔄 **Dados agora disponíveis em todas as páginas!**
-            """)
-            
-            # Limpar caches para forçar recarregamento
-            st.cache_data.clear()
-            
-            return True
+            if arquivos_com_erro == 0:
+                st.success(f"✅ **Upload concluído com sucesso!** {arquivos_processados} arquivo(s) processado(s) e {total_transacoes} transações importadas.")
+            else:
+                st.warning(f"⚠️ **Upload parcialmente concluído.** {arquivos_processados} arquivo(s) processado(s), {arquivos_com_erro} com erro(s). {total_transacoes} transações importadas.")
         else:
-            st.warning("⚠️ Nenhum arquivo foi processado com sucesso")
-            return False
+            st.error("❌ **Falha no upload.** Nenhum arquivo foi processado com sucesso.")
+        
+        # Limpar caches para forçar recarregamento
+        st.cache_data.clear()
+        
+        return arquivos_processados > 0
             
     except Exception as e:
-        st.error(f"❌ Erro crítico no sistema: {str(e)}")
-        import traceback
-        st.code(traceback.format_exc())
+        st.error(f"❌ **Erro crítico:** Falha no sistema de upload.")
         return False
 
 st.header("📥 Upload de Faturas")
