@@ -1,6 +1,9 @@
 import streamlit as st
 import os
-from database import get_connection, create_tables
+
+# Imports Backend V2
+from utils.repositories_v2 import UsuarioRepository
+from utils.database_manager_v2 import DatabaseManager
 from utils.config import PROFILE_PICS_DIR
 from security.auth.authentication import SecureAuthentication
 try:
@@ -37,19 +40,20 @@ apply_page_security('public')
 # Criar diretório se não existir
 os.makedirs(PROFILE_PICS_DIR, exist_ok=True)
 
-# Inicializar banco e componentes de segurança
-create_tables()
+# Inicializar Backend V2 e componentes de segurança
+db_manager = DatabaseManager()
 rate_limiter = RateLimiter()
 validator = InputValidator()
 logger = SecurityLogger()
 
 @st.cache_data(ttl=60)
 def usuario_existe_db(username):
-    """Verifica se usuário já existe no banco - com cache"""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT 1 FROM usuarios WHERE usuario = ?', (username,))
-    return cur.fetchone() is not None
+    """Verifica se usuário já existe no banco usando Backend V2"""
+    try:
+        user_repo = UsuarioRepository(db_manager)
+        return user_repo.obter_usuario_por_username(username) is not None
+    except:
+        return False
 
 def is_valid_image_file(file_content, filename):
     """Valida se o arquivo é uma imagem válida"""
@@ -189,14 +193,26 @@ with st.form('cadastro_form', clear_on_submit=True):
                     profile_pic_path = process_profile_picture(foto, usuario)
                     if profile_pic_path is None:
                         st.stop()  # Erro no processamento da imagem
-                  # Tentar registrar usuário
-                auth_system = SecureAuthentication()
-                success, message = auth_system.register_user(nome, usuario, senha, email, profile_pic_path)
+                
+                # Tentar registrar usuário usando Backend V2
+                try:
+                    user_repo = UsuarioRepository(db_manager)
+                    user_id = user_repo.criar_usuario_com_senha(usuario, senha, email, profile_pic_path)
+                    
+                    if user_id:
+                        success = True
+                        message = "Usuário criado com sucesso!"
+                    else:
+                        success = False
+                        message = "Erro ao criar usuário"
+                except Exception as e:
+                    success = False
+                    message = f"Erro ao criar usuário: {str(e)}"
                 
                 if success:
                     st.success(f'✅ {message}')
                     st.info('👈 Agora você pode fazer login na página inicial.')
-                      # Limpar cache para atualizar dados
+                    # Limpar cache para atualizar dados
                     st.cache_data.clear()
                     
                 else:

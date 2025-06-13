@@ -25,8 +25,13 @@ try:
     from componentes.profile_pic_component import boas_vindas_com_foto
     from utils.auth import verificar_autenticacao
     from utils.formatacao import formatar_valor_monetario
-    from utils.ofx_reader import OFXReader
+    
+    # Imports Backend V2
+    from utils.repositories_v2 import UsuarioRepository, TransacaoRepository
+    from utils.database_manager_v2 import DatabaseManager
+    from services.transacao_service_v2 import TransacaoService
     from utils.exception_handler import ExceptionHandler
+    
 except ImportError as e:
     st.error(f"Erro ao importar módulos do projeto: {e}")
     st.stop()
@@ -221,36 +226,63 @@ financial_service = FinancialAIService(ai_manager)
 # === FUNÇÕES DE DADOS ===
 
 @functools.lru_cache(maxsize=32)
-def get_financial_data(user_id: str) -> Dict[str, Any]:
-    """Busca dados financeiros do usuário com cache"""
+def get_financial_data(username: str) -> Dict[str, Any]:
+    """Busca dados financeiros do usuário com cache usando Backend V2"""
     try:
-        ofx_reader = OFXReader()
+        # Inicializar Backend V2
+        db_manager = DatabaseManager()
+        user_repo = UsuarioRepository(db_manager)
+        transacao_repo = TransacaoRepository(db_manager)
         
-        # Buscar dados dos últimos 4 meses
-        df_extratos = ofx_reader.buscar_extratos(dias=120)
-        df_cartoes = ofx_reader.buscar_cartoes(dias=120)
+        # Obter usuário usando o username da sessão
+        usuario_atual = user_repo.obter_usuario_por_username(username)
+        
+        if not usuario_atual:
+            return {"error": "Usuário não encontrado"}
+        
+        user_id = usuario_atual.get('id')
+        if not user_id:
+            return {"error": "ID do usuário não encontrado"}
+        
+        # Buscar dados dos últimos 4 meses usando Backend V2
+        data_fim = datetime.now().strftime('%Y-%m-%d')
+        data_inicio = (datetime.now() - timedelta(days=120)).strftime('%Y-%m-%d')
+        
+        df_transacoes = transacao_repo.obter_transacoes_periodo(
+            user_id=user_id,
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+            incluir_excluidas=False,
+            limite=None
+        )
         
         # Verificar se há dados
-        if df_extratos.empty and df_cartoes.empty:
-            return {"error": "Nenhum dado financeiro encontrado nos arquivos OFX"}
-          # Análise básica
+        if df_transacoes.empty:
+            return {"error": "Nenhum dado financeiro encontrado para este usuário"}
+        
+        # Separar por tipo de transação
+        df_receitas = df_transacoes[df_transacoes['valor'] > 0]
+        df_despesas = df_transacoes[df_transacoes['valor'] < 0]
+        
+        # Análise básica
         analysis = {
-            "total_transactions": len(df_extratos) + len(df_cartoes),
+            "total_transactions": len(df_transacoes),
             "period_days": 120,
             "extratos": {
-                "count": len(df_extratos),
-                "receitas": df_extratos[df_extratos['Valor'] > 0]['Valor'].sum() if not df_extratos.empty else 0,
-                "despesas": abs(df_extratos[df_extratos['Valor'] < 0]['Valor'].sum()) if not df_extratos.empty else 0
+                "count": len(df_receitas),
+                "receitas": df_receitas['valor'].sum() if not df_receitas.empty else 0,
+                "despesas": abs(df_despesas['valor'].sum()) if not df_despesas.empty else 0
             },
             "cartoes": {
-                "count": len(df_cartoes),
-                "gastos": abs(df_cartoes[df_cartoes['Valor'] < 0]['Valor'].sum()) if not df_cartoes.empty else 0
-            }
-        }
+                "count": len(df_despesas),
+                "gastos": abs(df_despesas['valor'].sum()) if not df_despesas.empty else 0
+            },
+            "user_id": user_id,
+            "username": username        }
         
         # Análise por categorias (se disponível)
-        if not df_extratos.empty and 'Categoria' in df_extratos.columns:
-            gastos_por_categoria = df_extratos[df_extratos['Valor'] < 0].groupby('Categoria')['Valor'].sum().abs().sort_values(ascending=False)
+        if not df_transacoes.empty and 'categoria' in df_transacoes.columns:
+            gastos_por_categoria = df_transacoes[df_transacoes['valor'] < 0].groupby('categoria')['valor'].sum().abs().sort_values(ascending=False)
             analysis["categorias"] = gastos_por_categoria.to_dict()
         
         return analysis
@@ -273,9 +305,7 @@ def main():
     
     # Título principal
     st.title("💡 Dicas Financeiras com IA")
-    st.markdown("---")
-
-    # Seção principal
+    st.markdown("---")    # Seção principal
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -284,9 +314,9 @@ def main():
         if st.button("🔍 Analisar Minhas Finanças", type="primary"):
             with st.spinner("Analisando seus dados financeiros..."):
                 try:
-                    # Buscar dados do usuário logado
-                    user_id = st.session_state.get('usuario', 'default')
-                    financial_data = get_financial_data(user_id)
+                    # Buscar dados do usuário logado usando Backend V2
+                    username = st.session_state.get('usuario', 'default')
+                    financial_data = get_financial_data(username)
                     # Diagnóstico: Exibir dados brutos se necessário
                     # st.write(financial_data)
                     analysis_result = financial_service.analyze_financial_data(financial_data)
@@ -316,15 +346,15 @@ def main():
                     st.info("Se o erro persistir, envie esta mensagem para o suporte.")
                     logger.error(f"Erro detalhado: {str(e)}", exc_info=True)
         
-        # Campo de perguntas para a IA
-        st.markdown("---")
+        # Campo de perguntas para a IA        st.markdown("---")
         st.subheader("🤖 Pergunte à IA sobre suas finanças")
         user_question = st.text_input("Digite sua pergunta para a IA:", key="pergunta_ia")
+        
         if st.button("Perguntar para a IA"):
             with st.spinner("A IA está analisando sua pergunta e seu histórico financeiro..."):
                 try:
-                    user_id = st.session_state.get('usuario', 'default')
-                    financial_data = get_financial_data(user_id)
+                    username = st.session_state.get('usuario', 'default')
+                    financial_data = get_financial_data(username)
                     # Inicializar IA antes de obter o client
                     if not ai_manager.initialize():
                         status = ai_manager.get_status()

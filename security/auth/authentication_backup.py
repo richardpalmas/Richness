@@ -68,8 +68,7 @@ class SecureAuthentication:
         self.validator = InputValidator()
         self.db_manager = DatabaseManager()
         self.user_repo = UsuarioRepository(self.db_manager)
-        
-        # Configurações de segurança
+          # Configurações de segurança
         self.MAX_LOGIN_ATTEMPTS = 5
         self.LOCKOUT_DURATION = 30  # minutos
         self.SESSION_TIMEOUT = 60  # minutos
@@ -116,49 +115,43 @@ class SecureAuthentication:
                     error="Username inválido",
                     ip_address=ip_address
                 )
-                return False, "Username inválido", {}
+                return False, "Credenciais inválidas", {}
             
-            # Buscar usuário
-            user_data = self.user_repo.obter_usuario_por_username(username)
-            if not user_data:
+            if not password or len(password) < 1:
                 self.logger.log_authentication_attempt(
                     username=username,
                     success=False,
-                    error="Usuário não encontrado",
+                    error="Senha vazia",
                     ip_address=ip_address
                 )
                 return False, "Credenciais inválidas", {}
             
-            # Verificar senha
-            password_hash = user_data.get('password_hash', '')
-            if not self.verify_password(password, password_hash):
+            # Buscar usuário usando Backend V2
+            user_data = self.user_repo.verificar_senha(username, password)
+            
+            if user_data:
+                # Autenticação bem-sucedida
+                self.logger.log_authentication_attempt(
+                    username=username,
+                    success=True,
+                    error=None,
+                    ip_address=ip_address
+                )
+                
+                # Atualizar último login
+                self.user_repo.atualizar_ultimo_login(user_data['id'])
+                
+                return True, "Autenticação bem-sucedida", user_data
+            else:
+                # Credenciais inválidas
                 self.logger.log_authentication_attempt(
                     username=username,
                     success=False,
-                    error="Senha incorreta",
+                    error="Credenciais inválidas",
                     ip_address=ip_address
                 )
                 return False, "Credenciais inválidas", {}
-            
-            # Login bem-sucedido
-            self.logger.log_authentication_attempt(
-                username=username,
-                success=True,
-                ip_address=ip_address
-            )
-            
-            # Retornar dados do usuário (sem informações sensíveis)
-            safe_user_data = {
-                'id': user_data['id'],
-                'username': user_data['username'],
-                'email': user_data.get('email', ''),
-                'created_at': user_data.get('created_at', ''),
-                'last_login': datetime.now().isoformat()
-            }
-            
-            return True, "Login realizado com sucesso", safe_user_data
-            
-        except Exception as e:
+                  except Exception as e:
             # Log erro de sistema
             self.logger.log_system_error(
                 error_type="authentication_system_error",
@@ -166,85 +159,90 @@ class SecureAuthentication:
             )
             return False, "Erro interno do sistema", {}
     
-    def create_user(self, username: str, password: str, email: Optional[str] = None) -> tuple[bool, str]:
+    def create_user(self, username: str, password: str, email: str = None) -> tuple[bool, str]:
         """
         Cria novo usuário com validações de segurança
         """
         try:
             # Validar username
             if not self.validator.validate_username(username):
-                return False, "Username inválido"
+                return False, "Nome de usuário inválido"
             
             # Validar senha
-            password_valid, password_message = PasswordPolicy.validate_password(password)
-            if not password_valid:
+            is_valid_password, password_message = PasswordPolicy.validate_password(password)
+            if not is_valid_password:
                 return False, password_message
             
             # Verificar se usuário já existe
             existing_user = self.user_repo.obter_usuario_por_username(username)
             if existing_user:
-                self.logger.log_user_registration(
-                    username=username,
-                    success=False,
-                    error="Usuário já existe"
-                )
-                return False, "Username já está em uso"
-              # Criar usuário usando o método correto do repository
+                return False, "Nome de usuário já existe"
+            
+            # Criar usuário usando Backend V2
             user_id = self.user_repo.criar_usuario_com_senha(username, password, email)
             
             if user_id:
-                self.logger.log_user_registration(
-                    username=username,
-                    success=True
+                self.logger.log_security_event(
+                    event_type="user_created",
+                    description=f"Novo usuário criado: {username}",
+                    severity="info",
+                    username=username
                 )
                 return True, "Usuário criado com sucesso"
             else:
-                self.logger.log_user_registration(
-                    username=username,
-                    success=False,
-                    error="Falha ao criar usuário no banco"
-                )
                 return False, "Erro ao criar usuário"
                 
         except Exception as e:
-            self.logger.log_system_error(
-                error_type="user_creation_error", 
-                error_message=f"Erro ao criar usuário: {str(e)}"
+            self.logger.log_security_event(
+                event_type="user_creation_error",
+                description=f"Erro ao criar usuário {username}: {str(e)}",
+                severity="high"
             )
             return False, "Erro interno do sistema"
     
+    def generate_secure_token(self) -> str:
+        """Gera token seguro para sessões"""
+        return secrets.token_urlsafe(32)
+    
     def validate_session(self, username: str) -> bool:
-        """Valida se a sessão do usuário ainda é válida"""
+        """Valida se a sessão do usuário é válida"""
         try:
-            # Verificar se o usuário existe e está ativo
-            user_data = self.user_repo.obter_usuario_por_username(username)
-            if not user_data or not user_data.get('is_active', False):
+            if not st.session_state.get('autenticado', False):
                 return False
             
-            # Aqui poderia adicionar validações adicionais de sessão
-            # como timeout, verificação de IP, etc.
+            if st.session_state.get('usuario') != username:
+                return False
             
+            # Verificar timeout de sessão
+            last_activity = st.session_state.get('last_activity')
+            if last_activity:
+                if datetime.now() - last_activity > timedelta(minutes=self.SESSION_TIMEOUT):
+                    return False
+            
+            # Atualizar última atividade
+            st.session_state['last_activity'] = datetime.now()
             return True
             
         except Exception as e:
-            self.logger.log_system_error(
-                error_type="session_validation_error",
-                error_message=f"Erro ao validar sessão: {str(e)}"
+            self.logger.log_security_event(
+                event_type="session_validation_error",
+                description=f"Erro ao validar sessão: {str(e)}",
+                severity="medium",
+                username=username
             )
             return False
 
 
-# Instância global para uso em todo o sistema
+# Instância global para uso no sistema
 secure_auth = SecureAuthentication()
 
 
-# Funções de conveniência para uso direto
-def authenticate_user(username: str, password: str, ip_address: Optional[str] = None) -> tuple[bool, str, dict]:
+def authenticate_user(username: str, password: str, ip_address: str = None) -> tuple[bool, str, dict]:
     """Função de conveniência para autenticação"""
     return secure_auth.authenticate_user(username, password, ip_address)
 
 
-def create_user(username: str, password: str, email: Optional[str] = None) -> tuple[bool, str]:
+def create_user(username: str, password: str, email: str = None) -> tuple[bool, str]:
     """Função de conveniência para criação de usuário"""
     return secure_auth.create_user(username, password, email)
 

@@ -1,9 +1,15 @@
 import streamlit as st
 import os
 from pathlib import Path
-from utils.ofx_reader import OFXReader
-from utils.auth import verificar_autenticacao
 import pandas as pd
+from datetime import datetime
+
+# Imports Backend V2
+from utils.repositories_v2 import UsuarioRepository, TransacaoRepository
+from utils.database_manager_v2 import DatabaseManager
+from services.transacao_service_v2 import TransacaoService
+from utils.auth import verificar_autenticacao
+from utils.user_data_manager import UserDataManager
 
 st.set_page_config(page_title="Atualizar Dados", layout="wide")
 
@@ -15,17 +21,147 @@ st.title("🔄 Atualizar Dados")
 
 st.markdown("""
 Faça upload dos seus arquivos OFX para atualizar suas faturas e extratos.
+Os dados serão isolados e seguros para seu usuário.
 """)
 
-# Upload de faturas
-def handle_upload(files, pasta_destino):
-    pasta = Path(pasta_destino)
-    pasta.mkdir(exist_ok=True)
-    for file in files:
-        file_path = pasta / file.name
-        with open(file_path, "wb") as f:
-            f.write(file.getbuffer())
-    st.success(f"{len(files)} arquivo(s) salvo(s) em '{pasta_destino}' com sucesso!")
+# Função para processar uploads usando Backend V2 - VERSÃO MELHORADA
+def handle_upload_v2(files, tipo_arquivo, usuario):
+    """Processa upload de arquivos OFX usando Backend V2 - VERSÃO MELHORADA"""
+    try:
+        # Inicializar Backend V2
+        db_manager = DatabaseManager()
+        user_repo = UsuarioRepository(db_manager)
+        transacao_repo = TransacaoRepository(db_manager)
+        
+        # Obter dados do usuário
+        user_data = user_repo.obter_usuario_por_username(usuario)
+        if not user_data:
+            st.error("❌ Usuário não encontrado")
+            return False
+        
+        user_id = user_data['id']
+        
+        # Criar diretório específico do usuário
+        user_dir = Path(f"user_data/{usuario}/{tipo_arquivo}")
+        user_dir.mkdir(parents=True, exist_ok=True)
+        
+        arquivos_processados = 0
+        total_transacoes = 0
+        
+        # Processar cada arquivo
+        for file in files:
+            try:
+                st.info(f"🔄 Processando arquivo: {file.name}")
+                
+                # 1. Salvar arquivo no diretório do usuário
+                file_path = user_dir / file.name
+                with open(file_path, "wb") as f:
+                    f.write(file.getbuffer())
+                
+                # 2. Processar arquivo OFX e extrair transações
+                try:
+                    # Usar o OFXReader existente para fazer parse do arquivo
+                    from utils.ofx_reader import OFXReader
+                    
+                    # Criar instância do OFXReader
+                    ofx_reader = OFXReader(username=usuario)
+                    
+                    # Fazer parse direto do arquivo
+                    parsed_data = ofx_reader._parse_ofx_file(file_path)
+                    
+                    if parsed_data and 'transactions' in parsed_data and parsed_data['transactions']:
+                        # 3. Preparar lista de transações para inserir em lote
+                        transacoes_para_inserir = []
+                        
+                        for transaction in parsed_data['transactions']:
+                            try:                                # Preparar dados da transação
+                                transacao_data = {
+                                    'data': transaction['data'].strftime('%Y-%m-%d') if hasattr(transaction['data'], 'strftime') else str(transaction['data']),
+                                    'descricao': str(transaction.get('descricao', '')),
+                                    'valor': float(transaction.get('valor', 0.0)),
+                                    'categoria': ofx_reader._categorizar_transacao(transaction.get('descricao', '')),
+                                    'origem': 'ofx_extrato' if tipo_arquivo == 'extratos' else 'ofx_cartao',
+                                    'arquivo_origem': file.name,
+                                    'conta': transaction.get('conta'),
+                                    'tipo': transaction.get('tipo', 'receita' if transaction.get('valor', 0) > 0 else 'despesa')
+                                }
+                                
+                                transacoes_para_inserir.append(transacao_data)
+                                    
+                            except Exception as e:
+                                st.warning(f"⚠️ Erro ao preparar transação: {str(e)}")
+                                continue
+                        
+                        # 4. Inserir transações em lote (mais eficiente)
+                        if transacoes_para_inserir:
+                            try:
+                                transacoes_inseridas = transacao_repo.criar_transacoes_lote(
+                                    user_id=user_id,
+                                    transacoes=transacoes_para_inserir
+                                )
+                                
+                                total_transacoes += len(transacoes_para_inserir)
+                                st.success(f"✅ {file.name}: {len(transacoes_para_inserir)} transações inseridas no banco")
+                                
+                            except Exception as e:
+                                st.error(f"❌ Erro ao inserir transações em lote: {str(e)}")
+                                # Fallback: inserir uma por uma
+                                transacoes_inseridas = 0
+                                for transacao_data in transacoes_para_inserir:
+                                    try:
+                                        transacao_repo.criar_ou_atualizar_transacao(
+                                            user_id=user_id,
+                                            transacao=transacao_data
+                                        )
+                                        transacoes_inseridas += 1
+                                    except Exception as e_individual:
+                                        st.warning(f"⚠️ Erro ao inserir transação individual: {str(e_individual)}")
+                                        continue
+                                
+                                total_transacoes += transacoes_inseridas
+                                st.success(f"✅ {file.name}: {transacoes_inseridas} transações inseridas (fallback individual)")
+                        else:
+                            st.warning(f"⚠️ {file.name}: Nenhuma transação válida encontrada")
+                        
+                    else:
+                        st.warning(f"⚠️ {file.name}: Nenhuma transação encontrada no arquivo OFX")
+                    
+                except Exception as e:
+                    st.error(f"❌ Erro ao processar OFX {file.name}: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                    # Continuar com próximo arquivo mesmo se um falhar
+                    continue
+                
+                arquivos_processados += 1
+                    
+            except Exception as e:
+                st.error(f"❌ Erro ao processar arquivo {file.name}: {str(e)}")
+                continue
+        
+        # Resultado final
+        if arquivos_processados > 0:
+            st.success(f"🎉 **PROCESSAMENTO CONCLUÍDO**")
+            st.markdown(f"""
+            - ✅ **{arquivos_processados}** arquivo(s) processado(s)
+            - ✅ **{total_transacoes}** transações inseridas no banco
+            - 📁 Arquivos salvos em: `{user_dir}`
+            - 🔄 **Dados agora disponíveis em todas as páginas!**
+            """)
+            
+            # Limpar caches para forçar recarregamento
+            st.cache_data.clear()
+            
+            return True
+        else:
+            st.warning("⚠️ Nenhum arquivo foi processado com sucesso")
+            return False
+            
+    except Exception as e:
+        st.error(f"❌ Erro crítico no sistema: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return False
 
 st.header("📥 Upload de Faturas")
 fatura_files = st.file_uploader(
@@ -35,7 +171,7 @@ fatura_files = st.file_uploader(
     key="fatura_upload"
 )
 if fatura_files:
-    handle_upload(fatura_files, "faturas")
+    handle_upload_v2(fatura_files, "faturas", usuario)
 
 st.header("📥 Upload de Extratos")
 extrato_files = st.file_uploader(
@@ -45,7 +181,7 @@ extrato_files = st.file_uploader(
     key="extrato_upload"
 )
 if extrato_files:
-    handle_upload(extrato_files, "extratos")
+    handle_upload_v2(extrato_files, "extratos", usuario)
 
 # Visualização dos arquivos já carregados
 col_extratos, col_faturas = st.columns([1, 1], gap="large")
@@ -67,8 +203,11 @@ st.markdown(custom_css, unsafe_allow_html=True)
 
 with col_extratos:
     st.header("📄 Extratos já carregados")
-    extratos_dir = Path("extratos")
-    extrato_files = sorted([f.name for f in extratos_dir.glob("*.ofx")])
+    extratos_dir = Path(f"user_data/{usuario}/extratos")
+    extrato_files = []
+    if extratos_dir.exists():
+        extrato_files = sorted([f.name for f in extratos_dir.glob("*.ofx")])
+    
     if extrato_files:
         st.markdown("<table class='file-table'><tr><th>Arquivo</th><th style='width:130px;'>Ação</th></tr>", unsafe_allow_html=True)
         for file in extrato_files:
@@ -89,8 +228,11 @@ with col_extratos:
 
 with col_faturas:
     st.header("📄 Faturas já carregadas")
-    faturas_dir = Path("faturas")
-    fatura_files = sorted([f.name for f in faturas_dir.glob("*.ofx")])
+    faturas_dir = Path(f"user_data/{usuario}/faturas")
+    fatura_files = []
+    if faturas_dir.exists():
+        fatura_files = sorted([f.name for f in faturas_dir.glob("*.ofx")])
+    
     if fatura_files:
         st.markdown("<table class='file-table'><tr><th>Arquivo</th><th style='width:130px;'>Ação</th></tr>", unsafe_allow_html=True)
         for file in fatura_files:

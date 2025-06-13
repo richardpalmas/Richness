@@ -1,12 +1,20 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime, timedelta
+import warnings
+import hashlib
+
+# Imports Backend V2
 from componentes.profile_pic_component import boas_vindas_com_foto
-from utils.ofx_reader import OFXReader
+from utils.repositories_v2 import UsuarioRepository, TransacaoRepository
+from utils.database_manager_v2 import DatabaseManager
+from services.transacao_service_v2 import TransacaoService
 from utils.auth import verificar_autenticacao
-from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario, calcular_resumo_financeiro
 from utils.exception_handler import ExceptionHandler
+
+warnings.filterwarnings('ignore')
 
 st.set_page_config(layout="wide")
 
@@ -19,36 +27,69 @@ if 'usuario' in st.session_state:
 
 st.title("💰 Minhas Economias")
 
-# Função otimizada com cache
-@st.cache_resource(ttl=300)
-def get_ofx_reader():
-    return OFXReader()
-
+# Função otimizada com cache para Backend V2
 @st.cache_data(ttl=600)
 def carregar_dados_economias(usuario):
-    """Carrega dados de economias com cache para performance"""
+    """Carrega dados de economias usando Backend V2 com cache para performance"""
     def _carregar_dados():
-        ofx_reader = get_ofx_reader()
-        
-        # Carregar dados dos arquivos OFX
-        df_extratos = ofx_reader.buscar_extratos()
-        df_cartoes = ofx_reader.buscar_cartoes()
-        
-        # Combinar extratos e cartões
-        df = pd.concat([df_extratos, df_cartoes], ignore_index=True) if not df_extratos.empty or not df_cartoes.empty else pd.DataFrame()
-        
-        # Calcular saldos por origem
-        saldos_info = {}
-        if not df.empty:
-            for origem in df['Origem'].unique():
-                df_origem = df[df['Origem'] == origem]
-                saldo = df_origem['Valor'].sum()
-                saldos_info[origem] = {
-                    'saldo': saldo,
-                    'tipo': 'credit_card' if 'fatura' in origem.lower() or 'nubank' in origem.lower() else 'checking'
-                }
-        
-        return saldos_info, df
+        try:
+            # Inicializar Backend V2
+            db_manager = DatabaseManager()
+            user_repo = UsuarioRepository(db_manager)
+            transacao_repo = TransacaoRepository(db_manager)
+            
+            # Obter usuário usando o username da sessão
+            usuario_atual = user_repo.obter_usuario_por_username(usuario)
+            
+            if not usuario_atual:
+                return {}, pd.DataFrame()
+            
+            user_id = usuario_atual.get('id')
+            if not user_id:
+                return {}, pd.DataFrame()
+            
+            # Carregar transações do Backend V2 - usando período amplo para obter todas
+            from datetime import datetime, timedelta
+            data_fim = datetime.now().strftime('%Y-%m-%d')
+            data_inicio = (datetime.now() - timedelta(days=365*3)).strftime('%Y-%m-%d')  # 3 anos atrás
+            
+            df = transacao_repo.obter_transacoes_periodo(
+                user_id=user_id,
+                data_inicio=data_inicio,
+                data_fim=data_fim,
+                incluir_excluidas=False,
+                limite=None  # Sem limite para obter todas
+            )
+            
+            # Calcular saldos por origem/conta
+            saldos_info = {}
+            if not df.empty:
+                for origem in df['origem'].unique():
+                    df_origem = df[df['origem'] == origem]
+                    saldo = df_origem['valor'].sum()
+                    saldos_info[origem] = {
+                        'saldo': saldo,
+                        'tipo': 'credit_card' if 'cartao' in origem.lower() or 'nubank' in origem.lower() else 'checking'
+                    }
+                
+                # Padronizar colunas para compatibilidade
+                df = df.rename(columns={
+                    'valor': 'Valor',
+                    'descricao': 'Descrição',
+                    'categoria': 'Categoria',
+                    'data': 'Data',
+                    'origem': 'Origem'
+                })
+                
+                # Garantir que a coluna Data seja datetime
+                if 'Data' in df.columns:
+                    df['Data'] = pd.to_datetime(df['Data'])
+            
+            return saldos_info, df
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar dados: {str(e)}")
+            return {}, pd.DataFrame()
     
     return ExceptionHandler.safe_execute(
         func=_carregar_dados,
@@ -78,9 +119,45 @@ df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
 
 # Filtros essenciais
 st.sidebar.header("🔍 Filtros")
-start_date, end_date = filtro_data(df, "economias")
-categorias_selecionadas = filtro_categorias(df, "Filtrar por Categorias", "economias")
-df_filtrado = aplicar_filtros(df, start_date, end_date, categorias_selecionadas)
+
+# Filtro de data simples
+if not df.empty:
+    min_date = df["Data"].min().date()
+    max_date = df["Data"].max().date()
+    
+    start_date = st.sidebar.date_input(
+        "Data Inicial",
+        min_date,
+        min_value=min_date,
+        max_value=max_date,
+        key="economias_start_date"
+    )
+    
+    end_date = st.sidebar.date_input(
+        "Data Final",
+        max_date,
+        min_value=min_date,
+        max_value=max_date,
+        key="economias_end_date"
+    )
+    
+    # Filtro de categorias
+    categorias_unicas = sorted(df["Categoria"].dropna().unique())
+    categorias_selecionadas = st.sidebar.multiselect(
+        "Filtrar por Categorias",
+        categorias_unicas,
+        default=categorias_unicas,
+        key="economias_categorias"
+    )
+    
+    # Aplicar filtros
+    df_filtrado = df[
+        (df["Data"].dt.date >= start_date) &
+        (df["Data"].dt.date <= end_date) &
+        (df["Categoria"].isin(categorias_selecionadas))
+    ].copy()
+else:
+    df_filtrado = df.copy()
 
 # Resumo financeiro atual baseado nos saldos calculados
 if saldos_info:

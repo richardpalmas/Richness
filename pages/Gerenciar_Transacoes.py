@@ -1,11 +1,20 @@
 # -*- coding: utf-8 -*-
+"""
+🔧 Funcionalidade: Gerenciamento de transações
+✅ Backend V2: Migrado para usar database_manager_v2 e repositories_v2
+"""
+
 import pandas as pd
 import streamlit as st
 import json
 import os
-from datetime import datetime
+import hashlib
+from datetime import datetime, timedelta
 
-from database import get_connection
+# BACKEND V2 OBRIGATÓRIO - Importações exclusivas
+from utils.database_manager_v2 import DatabaseManager
+from utils.repositories_v2 import RepositoryManager
+from services.transacao_service_v2 import TransacaoService
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 from utils.formatacao import formatar_valor_monetario
 from utils.ofx_reader import OFXReader
@@ -26,6 +35,26 @@ def verificar_autenticacao():
 
 verificar_autenticacao()
 
+# Inicializar Backend V2
+@st.cache_resource
+def init_backend_v2_gerenciar():
+    """Inicializa e retorna instâncias do Backend V2"""
+    try:
+        db_manager = DatabaseManager()
+        repo_manager = RepositoryManager(db_manager)
+        transacao_service = TransacaoService()
+        
+        return {
+            'db_manager': db_manager,
+            'repo_manager': repo_manager,
+            'transacao_service': transacao_service
+        }
+    except Exception as e:
+        st.error(f"❌ Erro ao inicializar Backend V2: {e}")
+        st.stop()
+
+backend_v2 = init_backend_v2_gerenciar()
+
 # Constantes
 CATEGORIAS_DISPONIVEIS = [
     "Alimentação",
@@ -42,11 +71,11 @@ CATEGORIAS_DISPONIVEIS = [
     "Compras Online",
     "Combustível",
     "Farmácia",
-    "Supermercado",
-    "Restaurante",
+    "Supermercado",    "Restaurante",
     "Academia",
     "Streaming",
-    "Telefone",    "Internet",
+    "Telefone",
+    "Internet",
     "Banco/Taxas",
     "Outros"
 ]
@@ -60,6 +89,83 @@ from utils.config import (
     get_transacoes_manuais_file,
     get_current_user
 )
+
+# Funções utilitárias para hash de transação (compatibilidade)
+def gerar_hash_transacao(row):
+    """Gera um hash único para identificar uma transação de forma consistente"""
+    # Usar data, descrição e valor para criar um identificador único
+    data_str = row["Data"].strftime("%Y-%m-%d") if hasattr(row["Data"], 'strftime') else str(row["Data"])
+    chave = f"{data_str}|{row['Descrição']}|{row['Valor']}"
+    return hashlib.md5(chave.encode()).hexdigest()
+
+# Função principal para carregar transações usando Backend V2
+@st.cache_data(ttl=300, show_spinner="Carregando transações...")
+def carregar_transacoes_v2(usuario, periodo_dias=365):
+    """Carrega todas as transações usando Backend V2 com personalizações"""
+    try:
+        transacao_service = backend_v2['transacao_service']
+        
+        # Carregar transações do usuário
+        df_transacoes = transacao_service.listar_transacoes_usuario(usuario, limite=5000)
+        
+        if not df_transacoes.empty:
+            # Converter colunas para o formato esperado pela página (compatibilidade)
+            df_transacoes = df_transacoes.rename(columns={
+                'data': 'Data',
+                'descricao': 'Descrição',
+                'valor': 'Valor',
+                'categoria': 'Categoria',
+                'tipo': 'Tipo',
+                'origem': 'Origem',
+                'conta': 'Conta'
+            })
+            
+            # Garantir que as colunas estão no formato correto
+            df_transacoes["Data"] = pd.to_datetime(df_transacoes["Data"])
+            df_transacoes["Valor"] = pd.to_numeric(df_transacoes["Valor"], errors="coerce")
+            
+            # Remover valores nulos
+            df_transacoes = df_transacoes.dropna(subset=["Valor"])
+            
+            # Aplicar filtro de período se especificado
+            if periodo_dias > 0:
+                data_limite = datetime.now() - timedelta(days=periodo_dias)
+                df_transacoes = df_transacoes[df_transacoes["Data"] >= data_limite]
+            
+            # Aplicar categorizações personalizadas do usuário (compatibilidade com arquivos JSON)
+            cache = carregar_cache_categorias()
+            if cache:
+                def aplicar_categoria_personalizada(row):
+                    descricao_normalizada = row["Descrição"].lower().strip()
+                    if descricao_normalizada in cache:
+                        return cache[descricao_normalizada]
+                    return row.get("Categoria", "Outros")
+                
+                df_transacoes["Categoria"] = df_transacoes.apply(aplicar_categoria_personalizada, axis=1)
+            
+            # Adicionar coluna de notas a partir de descrições personalizadas
+            descricoes = carregar_descricoes_personalizadas()
+            if descricoes:
+                def obter_descricao_personalizada(row):
+                    hash_transacao = gerar_hash_transacao(row)
+                    return descricoes.get(hash_transacao, "")
+                df_transacoes["Nota"] = df_transacoes.apply(obter_descricao_personalizada, axis=1)
+            else:
+                df_transacoes["Nota"] = ""
+            
+            # Filtrar transações excluídas
+            df_transacoes = filtrar_transacoes_excluidas(df_transacoes)
+            
+            # Ordenar por data (mais recente primeiro)
+            df_transacoes = df_transacoes.sort_values("Data", ascending=False)
+        
+        return df_transacoes
+        
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar transações: {e}")
+        return pd.DataFrame()
+
+# Manter funções legadas para compatibilidade com arquivos JSON existentes
 
 def carregar_cache_categorias():
     """Carrega o cache de categorizações personalizadas do usuário"""
@@ -113,55 +219,10 @@ def get_todas_categorias():
 
 @st.cache_data(ttl=300)
 def carregar_transacoes():
-    """Carrega todas as transações disponíveis (OFX + manuais)"""
-    def _load_data():
-        # Obter usuário atual para isolamento de dados
-        usuario_atual = get_current_user()
-        ofx_reader = OFXReader(usuario_atual)
-        
-        # Carregar dados dos arquivos OFX
-        df_extratos = ofx_reader.buscar_extratos()
-        df_cartoes = ofx_reader.buscar_cartoes()
-        
-        # Combinar extratos e cartões
-        df_ofx = pd.concat([df_extratos, df_cartoes], ignore_index=True) if not df_extratos.empty or not df_cartoes.empty else pd.DataFrame()
-        
-        # Carregar transações manuais
-        transacoes_manuais = carregar_transacoes_manuais()
-        df_manuais = converter_transacoes_manuais_para_df(transacoes_manuais)
-        
-        # Combinar transações OFX e manuais
-        if not df_ofx.empty and not df_manuais.empty:
-            df = pd.concat([df_ofx, df_manuais], ignore_index=True)
-        elif not df_ofx.empty:
-            df = df_ofx
-        elif not df_manuais.empty:
-            df = df_manuais
-        else:
-            df = pd.DataFrame()
-        
-        if not df.empty:
-            df["Data"] = pd.to_datetime(df["Data"])
-            df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
-            
-            # Aplicar categorizações personalizadas do usuário
-            cache = carregar_cache_categorias()
-            
-            def aplicar_categoria_personalizada(row):
-                descricao_normalizada = row["Descrição"].lower().strip()
-                if descricao_normalizada in cache:
-                    return cache[descricao_normalizada]
-                return row.get("Categoria", "Outros")
-            
-            df["Categoria"] = df.apply(aplicar_categoria_personalizada, axis=1)
-        
-        return df
-    
-    return ExceptionHandler.safe_execute(
-        func=_load_data,
-        error_handler=ExceptionHandler.handle_generic_error,
-        default_return=pd.DataFrame()
-    )
+    """Carrega todas as transações disponíveis - MIGRADO PARA BACKEND V2"""
+    # Redirecionar para nova função Backend V2
+    usuario_atual = get_current_user()
+    return carregar_transacoes_v2(usuario_atual, periodo_dias=730)  # 2 anos de dados
 
 # Funções para gerenciar transações excluídas
 def carregar_transacoes_excluidas():
@@ -185,14 +246,6 @@ def salvar_transacoes_excluidas(transacoes_excluidas):
     except Exception as e:
         st.error(f"Erro ao salvar transações excluídas: {e}")
         return False
-
-def gerar_hash_transacao(row):
-    """Gera um hash único para identificar uma transação de forma consistente"""
-    import hashlib
-    # Usar data, descrição e valor para criar um identificador único
-    data_str = row["Data"].strftime("%Y-%m-%d") if hasattr(row["Data"], 'strftime') else str(row["Data"])
-    chave = f"{data_str}|{row['Descrição']}|{row['Valor']}"
-    return hashlib.md5(chave.encode()).hexdigest()
 
 def excluir_transacao(row):
     """Exclui uma transação específica adicionando-a à lista de excluídas"""
@@ -523,13 +576,15 @@ if df.empty:
 # Filtrar por tipo de transação baseado na escolha
 if modo_credito:
     # Filtrar apenas transações de cartão de crédito (origem de faturas)
-    df = df[df.get("Origem", "").str.contains("Nubank_|fatura", case=False, na=False) | 
-            (df.get("Origem", "") == "Manual") & (df.get("tipo_pagamento", "") != "Espécie")]
+    if "Origem" in df.columns:
+        df = df[df["Origem"].str.contains("Nubank_|fatura", case=False, na=False) | 
+                ((df["Origem"] == "Manual") & (df.get("tipo_pagamento", "") != "Espécie"))]
     st.info("🎯 **Modo Crédito ativado** - Exibindo apenas transações de cartão de crédito e transações manuais não em espécie")
 else:
     # Filtrar transações à vista (extratos + manuais em espécie)
-    df = df[~df.get("Origem", "").str.contains("Nubank_|fatura", case=False, na=False) | 
-            (df.get("Origem", "") == "Manual") & (df.get("tipo_pagamento", "") == "Espécie")]
+    if "Origem" in df.columns:
+        df = df[~df["Origem"].str.contains("Nubank_|fatura", case=False, na=False) | 
+                ((df["Origem"] == "Manual") & (df.get("tipo_pagamento", "") == "Espécie"))]
     st.info("💳 **Modo À Vista ativado** - Exibindo transações de conta corrente e transações manuais em espécie")
 
 # Remover transações excluídas

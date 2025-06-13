@@ -4,12 +4,26 @@ import os
 from PIL import Image
 import base64
 import io
-from database import get_connection, query_with_cache
-from utils.config import PROFILE_PICS_DIR
 import functools
+
+# Imports Backend V2
+from utils.repositories_v2 import UsuarioRepository
+from utils.database_manager_v2 import DatabaseManager
+from utils.config import PROFILE_PICS_DIR
 
 # Cache para imagens de perfil para evitar carregamentos repetidos
 _profile_pic_cache = {}
+
+# Função auxiliar para Backend V2
+@st.cache_data(ttl=3600)
+def get_user_data_cached(username):
+    """Obtém dados do usuário com cache usando Backend V2"""
+    try:
+        db_manager = DatabaseManager()
+        user_repo = UsuarioRepository(db_manager)
+        return user_repo.obter_usuario_por_username(username)
+    except:
+        return None
 
 @functools.lru_cache(maxsize=32)
 def image_to_base64(img_path):
@@ -20,7 +34,11 @@ def image_to_base64(img_path):
         img = Image.open(img_path)
         # Redimensionar imagem para um tamanho máximo razoável (otimização)
         if img.width > 256 or img.height > 256:
-            img.thumbnail((256, 256), Image.LANCZOS)
+            # Redimensionar imagem com compatibilidade de versão
+            try:
+                img.thumbnail((256, 256), Image.Resampling.LANCZOS)
+            except AttributeError:
+                img.thumbnail((256, 256))
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=85, optimize=True)
         byte_im = buf.getvalue()
@@ -31,12 +49,11 @@ def image_to_base64(img_path):
 def get_profile_pic_path(usuario):
     """
     Função otimizada para buscar o caminho da foto de perfil do usuário,
-    usando cache de consulta de banco de dados.
+    usando cache de consulta de banco de dados Backend V2.
     """
-    # Usar função de cache para buscar apenas o campo necessário
-    query = "SELECT profile_pic FROM usuarios WHERE usuario = ?"
-    result = query_with_cache(query, (usuario,), ttl=3600)  # Cache por 1 hora
-    return result[0]['profile_pic'] if result else ''
+    # Usar função de cache Backend V2
+    user_data = get_user_data_cached(usuario)
+    return user_data.get('profile_pic', '') if user_data else ''
 
 def foto_perfil_inline(usuario, tamanho=64):
     """
@@ -78,10 +95,9 @@ def boas_vindas_com_foto(usuario):
     """
     Exibe a foto de perfil e mensagem de boas-vindas com cache para performance
     """
-    # Obter nome do usuário usando função otimizada
-    query = "SELECT nome FROM usuarios WHERE usuario = ?"
-    result = query_with_cache(query, (usuario,), ttl=3600)
-    nome = result[0]['nome'] if result else usuario
+    # Obter nome do usuário usando Backend V2
+    user_data = get_user_data_cached(usuario)
+    nome = user_data.get('nome', usuario) if user_data else usuario
 
     # Obter foto HTML
     foto_html = foto_perfil_inline(usuario)

@@ -81,14 +81,13 @@ class UsuarioRepository(BaseRepository):
                 SUM(CASE WHEN t.valor > 0 THEN t.valor ELSE 0 END) as receitas_totais,
                 SUM(CASE WHEN t.valor < 0 THEN ABS(t.valor) ELSE 0 END) as despesas_totais,
                 MAX(t.data) as ultima_transacao,
-                MIN(t.data) as primeira_transacao
-            FROM usuarios u
+                MIN(t.data) as primeira_transacao            FROM usuarios u
             LEFT JOIN transacoes t ON u.id = t.user_id
             LEFT JOIN categorias_personalizadas cp ON u.id = cp.user_id AND cp.is_active = 1
             LEFT JOIN descricoes_personalizadas dp ON u.id = dp.user_id
             LEFT JOIN transacoes_excluidas te ON u.id = te.user_id
             LEFT JOIN transacoes_manuais tm ON u.id = tm.user_id
-            WHERE u.id = ?        """, [user_id]).iloc[0].to_dict()
+            WHERE u.id = ?""", [user_id]).iloc[0].to_dict()
     
     def atualizar_ultimo_login(self, user_id: int) -> bool:
         """Atualiza timestamp do último login"""
@@ -102,11 +101,9 @@ class UsuarioRepository(BaseRepository):
         """Lista todos os usuários do sistema"""
         result = self.db.executar_query("SELECT * FROM usuarios ORDER BY username", [])
         return [dict(row) for row in result]
-        result = self.db.executar_query("SELECT * FROM usuarios ORDER BY username", [])
-        return [dict(row) for row in result]
 
-    def criar_usuario_com_senha(self, username: str, password: str, email: Optional[str] = None) -> int:
-        """Cria novo usuário com senha criptografada"""
+    def criar_usuario_com_senha(self, username: str, password: str, email: Optional[str] = None, profile_pic: Optional[str] = None) -> int:
+        """Cria novo usuário com senha criptografada e foto de perfil opcional"""
         import bcrypt
         
         self._log_operation("criar_usuario_com_senha", f"Username: {username}")
@@ -118,9 +115,9 @@ class UsuarioRepository(BaseRepository):
         user_hash = hashlib.md5(f"{username}_{datetime.now().isoformat()}".encode()).hexdigest()[:16]
         
         return self.db.executar_insert("""
-            INSERT INTO usuarios (username, user_hash, password_hash, email) 
-            VALUES (?, ?, ?, ?)
-        """, [username, user_hash, password_hash, email])
+            INSERT INTO usuarios (username, user_hash, password_hash, email, profile_pic) 
+            VALUES (?, ?, ?, ?, ?)
+        """, [username, user_hash, password_hash, email, profile_pic])
     
     def atualizar_senha(self, user_id: int, nova_senha: str) -> bool:
         """Atualiza senha do usuário com criptografia segura"""
@@ -192,6 +189,16 @@ class UsuarioRepository(BaseRepository):
         except Exception as e:
             self._log_operation("migrar_senha_error", f"Error: {str(e)}")
             return False
+    
+    def atualizar_profile_pic(self, user_id: int, profile_pic_path: str) -> bool:
+        """Atualiza o caminho da foto de perfil do usuário"""
+        self._log_operation("atualizar_profile_pic", f"User ID: {user_id}")
+        
+        affected = self.db.executar_update(
+            "UPDATE usuarios SET profile_pic = ? WHERE id = ?",
+            [profile_pic_path, user_id]
+        )
+        return affected > 0
 
 class TransacaoRepository(BaseRepository):
     """Repository para operações com transações"""

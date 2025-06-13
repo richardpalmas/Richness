@@ -269,9 +269,11 @@ class DatabaseManager:
             
             # Triggers para auditoria automática
             self._criar_triggers(conn)
-            
-            # Views materializadas para relatórios
+              # Views materializadas para relatórios
             self._criar_views(conn)
+            
+            # Executar migrações necessárias
+            self._migrate_database()
     
     def _criar_indices(self, conn):
         """Cria índices otimizados para performance"""
@@ -662,6 +664,18 @@ class DatabaseManager:
         except sqlite3.Error:
             pass
     
+    def _migrate_database(self):
+        """Executa migrações necessárias no banco de dados"""
+        with self.get_connection() as conn:
+            # Verificar se a coluna profile_pic existe na tabela usuarios
+            cursor = conn.execute("PRAGMA table_info(usuarios)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            # Adicionar coluna profile_pic se não existir
+            if 'profile_pic' not in columns:
+                conn.execute("ALTER TABLE usuarios ADD COLUMN profile_pic TEXT")
+                self.logger.info("Adicionada coluna profile_pic à tabela usuarios")
+
     def close_pool(self):
         """Fecha todas as conexões do pool"""
         with self._pool_lock:
