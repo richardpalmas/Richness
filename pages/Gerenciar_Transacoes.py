@@ -356,6 +356,126 @@ def converter_transacoes_manuais_para_df(transacoes_manuais):
         })
     
     return pd.DataFrame(dados)
+
+# Funções para categorização automática com LLM
+def configurar_openai():
+    """Configura a API da OpenAI"""
+    try:
+        # Verificar se a chave API está configurada
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            # Tentar carregar de arquivo de configuração local
+            config_file = "config_openai.json"
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    api_key = config.get("api_key")
+        
+        if api_key:
+            return api_key
+        return None
+    except Exception:
+        return None
+
+def categorizar_transacoes_com_llm(df_transacoes, categorias_disponiveis):
+    """Categoriza transações usando LLM"""
+    api_key = configurar_openai()
+    if not api_key:
+        st.error("❌ API da OpenAI não configurada. Configure a chave API para usar esta funcionalidade.")
+        return None
+    
+    try:
+        # Preparar dados para envio
+        transacoes_para_analisar = []
+        for _, row in df_transacoes.iterrows():
+            transacoes_para_analisar.append({
+                "descricao": row["Descrição"],
+                "valor": float(row["Valor"]),
+                "categoria_atual": row["Categoria"]
+            })
+        
+        # Criar prompt para a LLM
+        prompt = f"""
+        Você é um especialista em categorização de transações financeiras. Analise as transações abaixo e sugira a melhor categoria para cada uma baseado na descrição e valor.
+
+        CATEGORIAS DISPONÍVEIS: {', '.join(categorias_disponiveis)}
+
+        INSTRUÇÕES:
+        1. Use APENAS as categorias da lista fornecida
+        2. Considere a descrição da transação como principal indicador
+        3. Use o valor como contexto adicional
+        4. Seja consistente: transações similares devem ter a mesma categoria
+        5. Para valores negativos (despesas), foque no tipo de gasto
+        6. Para valores positivos (receitas), foque na fonte da receita
+
+        TRANSAÇÕES PARA ANALISAR:
+        {json.dumps(transacoes_para_analisar[:50], indent=2, ensure_ascii=False)}
+
+        RESPOSTA ESPERADA:
+        Retorne um JSON com uma lista onde cada item tem:
+        {{"descricao": "descrição da transação", "categoria_sugerida": "categoria escolhida", "confianca": "alta/media/baixa"}}
+
+        Analise apenas as primeiras 50 transações se houver mais que isso.
+        """        # Chamar a API da OpenAI
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini-2024-07-18",  # Modelo mais recente disponível
+            messages=[
+                {"role": "system", "content": "Você é um especialista em categorização de transações financeiras. Sempre responda em formato JSON válido."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=4000
+        )        # Processar resposta
+        resposta_texto = response.choices[0].message.content
+        if resposta_texto:
+            resposta_texto = resposta_texto.strip()
+        else:
+            st.error("❌ Resposta vazia da LLM")
+            return None
+        
+        # Tentar extrair JSON da resposta
+        if "```json" in resposta_texto:
+            resposta_texto = resposta_texto.split("```json")[1].split("```")[0]
+        elif "```" in resposta_texto:
+            resposta_texto = resposta_texto.split("```")[1].split("```")[0]
+        
+        # Parse do JSON
+        sugestoes = json.loads(resposta_texto)
+        
+        return sugestoes
+        
+    except json.JSONDecodeError as e:
+        st.error(f"❌ Erro ao processar resposta da LLM: {e}")
+        return None
+    except Exception as e:
+        st.error(f"❌ Erro ao categorizar com LLM: {e}")
+        return None
+
+def aplicar_categorizacao_llm(df_transacoes, sugestoes_llm):
+    """Aplica as sugestões da LLM ao DataFrame"""
+    df_resultado = df_transacoes.copy()
+    
+    # Criar mapeamento de descrição para categoria sugerida
+    mapeamento = {}
+    for sugestao in sugestoes_llm:
+        descricao = sugestao.get("descricao", "")
+        categoria = sugestao.get("categoria_sugerida", "")
+        if descricao and categoria:
+            mapeamento[descricao] = categoria
+    
+    # Aplicar mapeamento
+    def aplicar_categoria_llm(row):
+        descricao = row["Descrição"]
+        if descricao in mapeamento:
+            return mapeamento[descricao]
+        return row["Categoria"]  # Manter categoria original se não houver sugestão
+    
+    df_resultado["Categoria_LLM"] = df_resultado.apply(aplicar_categoria_llm, axis=1)
+    return df_resultado
+
 # Interface principal
 st.title("🏷️ Gerenciar Transações")
 st.markdown("**Corrija e personalize a categorização das suas transações**")
@@ -866,6 +986,240 @@ if df_filtrado.empty:
     st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
     st.stop()
 
+# Seção de categorização automática com LLM
+st.subheader("🤖 Categorização Automática com IA")
+with st.expander("🧠 Categorizar Transações com Inteligência Artificial", expanded=False):
+    st.markdown(f"""
+    **🚀 Use Inteligência Artificial para categorizar suas transações automaticamente!**
+    
+    A IA irá analisar a descrição e valor de cada transação para sugerir a melhor categoria.
+    
+    {"🎯 **Modo Crédito**: Ideal para categorizar compras no cartão de crédito" if modo_credito else "💳 **Modo À Vista**: Ideal para categorizar transações de conta corrente"}
+    """)
+    
+    # Verificar se há transações para categorizar
+    transacoes_para_categorizar = df_filtrado.copy()
+    
+    if not transacoes_para_categorizar.empty:
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            st.metric("📊 Transações Disponíveis", len(transacoes_para_categorizar))
+            
+            # Opção para limitar número de transações
+            limite_transacoes = st.slider(
+                "Número máximo de transações para analisar",
+                min_value=5,
+                max_value=min(50, len(transacoes_para_categorizar)),
+                value=min(20, len(transacoes_para_categorizar)),
+                help="Limite para evitar custos altos da API"
+            )
+        
+        with col2:
+            st.markdown("**🎯 Categorias Disponíveis:**")
+            categorias_disponiveis = get_todas_categorias()
+            st.caption(f"{len(categorias_disponiveis)} categorias")
+        
+        with col3:
+            st.markdown("**💡 Dicas:**")
+            st.caption("• A IA usa descrição e valor")
+            st.caption("• Processo pode levar 10-30s")
+            st.caption("• Você pode revisar antes de salvar")
+        
+        # Botão para iniciar categorização
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button(
+                "🤖 Categorizar com IA",
+                type="primary",
+                use_container_width=True,
+                help="Inicia o processo de categorização automática"
+            ):
+                # Inicializar estado de sessão para categorização LLM
+                if 'categorizacao_llm_resultados' not in st.session_state:
+                    st.session_state.categorizacao_llm_resultados = None
+                
+                # Pegar amostra das transações
+                df_amostra = transacoes_para_categorizar.head(limite_transacoes)
+                
+                with st.spinner("🤖 Analisando transações com IA... Isso pode levar alguns segundos."):
+                    sugestoes = categorizar_transacoes_com_llm(df_amostra, categorias_disponiveis)
+                
+                if sugestoes:
+                    st.session_state.categorizacao_llm_resultados = {
+                        'df_original': df_amostra,
+                        'sugestoes': sugestoes,
+                        'categorias_disponiveis': categorias_disponiveis
+                    }
+                    st.success("✅ Categorização concluída! Revise os resultados abaixo.")
+                    st.rerun()
+                else:
+                    st.error("❌ Falha na categorização. Verifique a configuração da API.")
+        
+        # Mostrar resultados da categorização se existirem
+        if 'categorizacao_llm_resultados' in st.session_state and st.session_state.categorizacao_llm_resultados:
+            resultados = st.session_state.categorizacao_llm_resultados
+            df_original = resultados['df_original']
+            sugestoes = resultados['sugestoes']
+            
+            st.markdown("---")
+            st.markdown("### 📋 Resultados da Categorização IA")
+            
+            # Estatísticas dos resultados
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("📊 Analisadas", len(sugestoes))
+            
+            with col2:
+                alta_confianca = len([s for s in sugestoes if s.get('confianca') == 'alta'])
+                st.metric("🎯 Alta Confiança", alta_confianca)
+            
+            with col3:
+                media_confianca = len([s for s in sugestoes if s.get('confianca') == 'media'])
+                st.metric("⚖️ Média Confiança", media_confianca)
+            
+            with col4:
+                baixa_confianca = len([s for s in sugestoes if s.get('confianca') == 'baixa'])
+                st.metric("⚠️ Baixa Confiança", baixa_confianca)
+            
+            # Tabela de resultados com aprovação individual
+            st.markdown("**✅ Revisar e Aprovar Sugestões:**")
+            
+            # Inicializar aprovações se não existir
+            if 'aprovacoes_llm' not in st.session_state:
+                st.session_state.aprovacoes_llm = {}
+            
+            # Mostrar transações com sugestões
+            transacoes_modificadas = 0
+            
+            for i, sugestao in enumerate(sugestoes[:20]):  # Mostrar até 20
+                col1, col2, col3, col4, col5, col6 = st.columns([2.5, 1.5, 1.5, 1.5, 0.8, 0.8])
+                
+                # Buscar transação original
+                descricao_sugestao = sugestao.get('descricao', '')
+                transacao_original = df_original[df_original['Descrição'] == descricao_sugestao]
+                
+                if not transacao_original.empty:
+                    row = transacao_original.iloc[0]
+                    
+                    with col1:
+                        st.text(f"{descricao_sugestao[:35]}...")
+                    
+                    with col2:
+                        categoria_atual = row['Categoria']
+                        st.text(f"📂 {categoria_atual}")
+                    
+                    with col3:
+                        categoria_sugerida = sugestao.get('categoria_sugerida', '')
+                        st.text(f"🤖 {categoria_sugerida}")
+                    
+                    with col4:
+                        confianca = sugestao.get('confianca', 'baixa')
+                        emoji_confianca = {"alta": "🎯", "media": "⚖️", "baixa": "⚠️"}
+                        st.text(f"{emoji_confianca.get(confianca, '⚠️')} {confianca}")
+                    
+                    with col5:
+                        key_aprovacao = f"aprovar_llm_{i}"
+                        if categoria_atual != categoria_sugerida:
+                            aprovado = st.checkbox(
+                                "✅",
+                                key=key_aprovacao,
+                                help="Aprovar esta sugestão"
+                            )
+                            if aprovado:
+                                st.session_state.aprovacoes_llm[descricao_sugestao] = categoria_sugerida
+                                transacoes_modificadas += 1
+                            elif descricao_sugestao in st.session_state.aprovacoes_llm:
+                                del st.session_state.aprovacoes_llm[descricao_sugestao]
+                        else:
+                            st.text("✅")  # Já está correto
+                    
+                    with col6:
+                        valor_formatado = f"R$ {abs(row['Valor']):.0f}"
+                        emoji_valor = "💰" if row['Valor'] > 0 else "💸"
+                        st.caption(f"{emoji_valor} {valor_formatado}")
+            
+            # Botões de ação para aprovações em lote
+            if len(sugestoes) > 20:
+                st.caption(f"... e mais {len(sugestoes) - 20} sugestões")
+            
+            st.markdown("---")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                aprovacoes_count = len(st.session_state.aprovacoes_llm)
+                st.metric("✅ Aprovadas", aprovacoes_count)
+            
+            with col2:
+                if st.button("✅ Aprovar Todas de Alta Confiança"):
+                    for sugestao in sugestoes:
+                        if sugestao.get('confianca') == 'alta':
+                            descricao = sugestao.get('descricao', '')
+                            categoria = sugestao.get('categoria_sugerida', '')
+                            if descricao and categoria:
+                                st.session_state.aprovacoes_llm[descricao] = categoria
+                    st.rerun()
+            
+            with col3:
+                if aprovacoes_count > 0:
+                    if st.button("💾 Salvar Aprovadas", type="primary"):                        # Aplicar aprovações ao cache de categorias
+                        cache = carregar_cache_categorias()
+                        
+                        for descricao, categoria in st.session_state.aprovacoes_llm.items():
+                            descricao_normalizada = descricao.lower().strip()
+                            cache[descricao_normalizada] = categoria
+                        
+                        if salvar_cache_categorias(cache):
+                            st.success(f"✅ {aprovacoes_count} categorizações salvas com sucesso!")
+                            # Limpar estados
+                            st.session_state.categorizacao_llm_resultados = None
+                            st.session_state.aprovacoes_llm = {}
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("❌ Erro ao salvar categorizações")
+            
+            with col4:
+                if st.button("🗑️ Descartar Resultados"):
+                    st.session_state.categorizacao_llm_resultados = None
+                    st.session_state.aprovacoes_llm = {}
+                    st.rerun()
+    
+    else:
+        st.info("📊 Nenhuma transação disponível para categorização com os filtros atuais.")
+
+# Configuração da API OpenAI (seção separada)
+with st.expander("⚙️ Configuração da API OpenAI"):
+    st.markdown("""
+    **🔑 Para usar a categorização com IA, você precisa configurar sua chave da API OpenAI:**
+    
+    **Método 1 - Variável de Ambiente:**
+    - Defina a variável `OPENAI_API_KEY` no seu sistema
+    
+    **Método 2 - Arquivo de Configuração:**
+    - Crie um arquivo `config_openai.json` na pasta do projeto
+    - Formato: `{"api_key": "sua-chave-aqui"}`
+    
+    **💡 Obtendo a chave:**
+    1. Acesse https://platform.openai.com/api-keys
+    2. Faça login em sua conta OpenAI
+    3. Crie uma nova chave API
+    4. Configure usando um dos métodos acima
+    
+    **💰 Custos estimados:**
+    - ~50 transações: $0.01 - $0.05 USD
+    - Modelo usado: GPT-4o-mini (mais econômico)
+    """)
+    
+    # Teste de configuração
+    if st.button("🔍 Testar Configuração"):
+        api_key = configurar_openai()
+        if api_key:
+            st.success("✅ API configurada corretamente!")
+        else:
+            st.error("❌ API não configurada. Siga as instruções acima.")
+
 # Seção de edição em lote
 st.subheader("⚡ Edição em Lote")
 with st.expander("📝 Alterar categoria de múltiplas transações"):
@@ -1340,27 +1694,35 @@ with st.expander("📝 Gerenciar Descrições Personalizadas"):
 
 # Informações de ajuda
 with st.expander("ℹ️ Como usar esta página"):
+    modo_info = """
+    **🎯 Modo Crédito Ativado:**
+    - Exibe apenas transações de cartão de crédito
+    - Funcionalidades específicas: análise por estabelecimento, identificação de parcelamentos
+    - Controle de metas de gastos por categoria
+    - Filtros adaptados para compras e estornos
+    """ if modo_credito else """
+    **💳 Modo À Vista Ativado:**
+    - Exibe transações de conta corrente e transações manuais em espécie
+    - Permite adicionar transações manuais (dinheiro, PIX, transferências)
+    - Funcionalidades completas de gerenciamento de transações manuais
+    - Filtros para receitas e despesas
+    """
+    
     st.markdown(f"""
     ### 🎯 Objetivo
     Esta página permite corrigir e personalizar a categorização das suas transações.
     
     ### 📋 Modo Atual: {tipo_gestao}
     
-    {f'''
-    **🎯 Modo Crédito Ativado:**
-    - Exibe apenas transações de cartão de crédito
-    - Funcionalidades específicas: análise por estabelecimento, identificação de parcelamentos
-    - Controle de metas de gastos por categoria
-    - Filtros adaptados para compras e estornos
-    ''' if modo_credito else '''
-    **💳 Modo À Vista Ativado:**
-    - Exibe transações de conta corrente e transações manuais em espécie
-    - Permite adicionar transações manuais (dinheiro, PIX, transferências)
-    - Funcionalidades completas de gerenciamento de transações manuais
-    - Filtros para receitas e despesas
-    '''}
+    {modo_info}
     
     ### 🔧 Funcionalidades Disponíveis
+    
+    **🤖 Categorização Automática com IA (NOVO):**
+    - Use Inteligência Artificial para categorizar transações automaticamente
+    - IA analisa descrição e valor para sugerir melhor categoria
+    - Revise e aprove sugestões antes de salvar
+    - Funciona nos modos à vista e crédito
     
     **🎨 Criar Categorias Personalizadas:**
     - Crie suas próprias categorias (Ex: Pets, Doações, Hobby)
@@ -1369,7 +1731,7 @@ with st.expander("ℹ️ Como usar esta página"):
     
     **⚡ Edição em Lote:**
     - Ative o "Modo Edição em Lote" para fazer múltiplas alterações
-    - Faça quantas mudanças quiser sem salvar imediatamente
+    - Faça quantas mudanças quiser não salvar imediatamente
     - Visualize todas as mudanças pendentes antes de confirmar
     - Salve todas de uma vez ou descarte se não estiver satisfeito
     

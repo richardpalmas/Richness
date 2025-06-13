@@ -150,6 +150,7 @@ migration_output.txt
 *.key
 .session_key
 .encryption_key
+config_openai_exemplo.json
 
 # Additional security files
 config/secrets.json

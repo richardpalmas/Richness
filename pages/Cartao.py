@@ -3,6 +3,9 @@ import pandas as pd
 import plotly.express as px
 from datetime import date, timedelta
 from dotenv import load_dotenv
+import json
+import os
+import hashlib
 
 from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection
@@ -15,6 +18,98 @@ from utils.exception_handler import ExceptionHandler
 # Configuração da página
 st.set_page_config(page_title="Cartão de Crédito", layout="wide")
 
+# Arquivos de cache e personalização
+CACHE_CATEGORIAS_FILE = "cache_categorias_usuario.json"
+DESCRICOES_PERSONALIZADAS_FILE = "descricoes_personalizadas.json"
+TRANSACOES_EXCLUIDAS_FILE = "transacoes_excluidas.json"
+
+# Funções para sincronização com personalizações do usuário
+def gerar_hash_transacao(row):
+    """Gera um hash único para identificar uma transação de forma consistente"""
+    # Usar data, descrição e valor para criar um identificador único
+    data_str = row["Data"].strftime("%Y-%m-%d") if hasattr(row["Data"], 'strftime') else str(row["Data"])
+    chave = f"{data_str}|{row['Descrição']}|{row['Valor']}"
+    return hashlib.md5(chave.encode()).hexdigest()
+
+def carregar_cache_categorias():
+    """Carrega o cache de categorizações personalizadas do usuário"""
+    if os.path.exists(CACHE_CATEGORIAS_FILE):
+        try:
+            with open(CACHE_CATEGORIAS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def carregar_descricoes_personalizadas():
+    """Carrega o cache de descrições personalizadas do usuário"""
+    if os.path.exists(DESCRICOES_PERSONALIZADAS_FILE):
+        try:
+            with open(DESCRICOES_PERSONALIZADAS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def carregar_transacoes_excluidas():
+    """Carrega a lista de transações excluídas pelo usuário"""
+    if os.path.exists(TRANSACOES_EXCLUIDAS_FILE):
+        try:
+            with open(TRANSACOES_EXCLUIDAS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def filtrar_transacoes_excluidas(df):
+    """Filtra as transações excluídas do DataFrame"""
+    if df.empty:
+        return df
+    
+    transacoes_excluidas = carregar_transacoes_excluidas()
+    if not transacoes_excluidas:
+        return df
+    
+    # Aplicar filtro
+    def nao_esta_excluida(row):
+        hash_transacao = gerar_hash_transacao(row)
+        return hash_transacao not in transacoes_excluidas
+    
+    df_filtrado = df[df.apply(nao_esta_excluida, axis=1)]
+    return df_filtrado
+
+def aplicar_personalizacoes_usuario(df):
+    """Aplica todas as personalizações do usuário ao DataFrame"""
+    if df.empty:
+        return df
+    
+    # Aplicar categorias personalizadas
+    cache_categorias = carregar_cache_categorias()
+    if cache_categorias:
+        def aplicar_categoria_personalizada(row):
+            descricao_normalizada = row["Descrição"].lower().strip()
+            if descricao_normalizada in cache_categorias:
+                return cache_categorias[descricao_normalizada]
+            return row.get("Categoria", "Outros")
+        
+        df["Categoria"] = df.apply(aplicar_categoria_personalizada, axis=1)
+    
+    # Aplicar descrições personalizadas (adicionar coluna "Nota")
+    descricoes = carregar_descricoes_personalizadas()
+    if descricoes:
+        def obter_descricao_personalizada(row):
+            hash_transacao = gerar_hash_transacao(row)
+            return descricoes.get(hash_transacao, "")
+        
+        df["Nota"] = df.apply(obter_descricao_personalizada, axis=1)
+    else:
+        df["Nota"] = ""
+    
+    # Filtrar transações excluídas
+    df = filtrar_transacoes_excluidas(df)
+    
+    return df
+
 # Verificação de autenticação
 verificar_autenticacao()
 usuario = st.session_state.get('usuario', 'default')
@@ -25,6 +120,9 @@ if usuario:
 
 st.title("💳 Cartão de Crédito")
 
+# Aviso sobre sincronização
+st.info("🔄 **Sincronização ativa:** Esta página reflete automaticamente todas as personalizações (categorias, descrições, exclusões) feitas na página 'Gerenciar Transações'.")
+
 # Cache do leitor OFX
 @st.cache_resource(ttl=300)
 def get_ofx_reader():
@@ -33,7 +131,7 @@ def get_ofx_reader():
 # Buscar dados com cache
 @st.cache_data(ttl=600, show_spinner="Carregando transações...")
 def carregar_dados_cartoes(dias):
-    """Carregar dados de cartões com cache"""
+    """Carregar dados de cartões com cache e aplicar personalizações do usuário"""
     def _load_data():
         ofx_reader = get_ofx_reader()
         df = ofx_reader.buscar_cartoes(dias)
@@ -45,6 +143,9 @@ def carregar_dados_cartoes(dias):
             
             # Remover valores nulos
             df = df.dropna(subset=["Valor"])
+            
+            # Aplicar personalizações do usuário (categorias, descrições, exclusões)
+            df = aplicar_personalizacoes_usuario(df)
             
             # Ordenar por data (mais recente primeiro)
             df = df.sort_values("Data", ascending=False)
@@ -228,32 +329,154 @@ with col2:
 
 # Top gastos
 st.subheader("🔝 Maiores Gastos")
-top_gastos = df_final.nsmallest(10, "Valor")[["Data", "Descrição", "Valor", "Categoria"]]
+top_gastos = df_final.nsmallest(10, "Valor")
+
+# Incluir coluna Nota se existe e tem dados
+colunas_exibir = ["Data", "Descrição", "Valor", "Categoria"]
+if "Nota" in top_gastos.columns and top_gastos["Nota"].notna().any() and (top_gastos["Nota"] != "").any():
+    colunas_exibir.insert(-1, "Nota")  # Inserir antes da Categoria
+
+top_gastos = top_gastos[colunas_exibir]
 top_gastos["Valor"] = top_gastos["Valor"].abs()
 top_gastos = formatar_df_monetario(top_gastos)
 
 st.dataframe(top_gastos, use_container_width=True)
 
 # Tabela completa de transações
-st.subheader("📋 Todas as Transações")
+st.subheader("📋 Transações do Período")
 
-# Preparar dados para exibição
-df_display = df_final.copy()
-df_display["Valor"] = df_display["Valor"].abs()  # Mostrar valores positivos
-df_display = formatar_df_monetario(df_display)
+# Função para formatar DataFrame com descrições personalizadas (igual à Home)
+def formatar_df_com_descricoes(df):
+    """Formata o DataFrame adicionando descrições personalizadas e removendo coluna Id"""
+    if df.empty:
+        return df
+    
+    # Criar cópia do DataFrame
+    df_formatado = df.copy()
+    
+    # Aplicar formatação monetária
+    df_formatado = formatar_df_monetario(df_formatado)
+    
+    # Reordenar colunas: Data → Descrição → Valor → Nota → outras
+    colunas_desejadas = []
+    
+    for col in df_formatado.columns:
+        if col.lower() not in ['id', 'index']:  # Excluir colunas de Id
+            colunas_desejadas.append(col)
+    
+    # Criar nova ordem das colunas
+    colunas_ordenadas = []
+    
+    # 1. Adicionar Data (se existir)
+    if "Data" in colunas_desejadas:
+        colunas_ordenadas.append("Data")
+    
+    # 2. Adicionar Descrição (se existir)
+    if "Descrição" in colunas_desejadas:
+        colunas_ordenadas.append("Descrição")
+    
+    # 3. Adicionar Valor (se existir)
+    if "Valor" in colunas_desejadas:
+        colunas_ordenadas.append("Valor")
+    elif "ValorFormatado" in colunas_desejadas:
+        colunas_ordenadas.append("ValorFormatado")
+    
+    # 4. Adicionar Nota (se existir e tem dados)
+    if "Nota" in colunas_desejadas:
+        colunas_ordenadas.append("Nota")
+    
+    # 5. Adicionar demais colunas na ordem original
+    for col in colunas_desejadas:
+        if col not in colunas_ordenadas:
+            colunas_ordenadas.append(col)
+    
+    return df_formatado[colunas_ordenadas]
 
-# Paginação simples
-num_registros = st.selectbox(
-    "Registros por página:", 
-    [25, 50, 100, 200], 
-    index=1
-)
+# Obter categorias disponíveis no período filtrado
+if not df_final.empty:
+    categorias_periodo = sorted(df_final["Categoria"].unique())
+    
+    # Criar lista de abas: "Todas" + categorias específicas
+    abas_disponiveis = ["📊 Todas"] + [f"🏷️ {cat}" for cat in categorias_periodo]
+    
+    # Criar abas usando st.tabs
+    tabs = st.tabs(abas_disponiveis)
+    
+    with tabs[0]:  # Aba "Todas"
+        st.markdown("**Todas as transações do cartão no período selecionado**")
+        
+        # Mostrar resumo
+        total_transacoes = len(df_final)
+        valor_total = df_final["Valor"].sum()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("💼 Total", total_transacoes)
+        with col2:
+            st.metric("💰 Total Gasto", formatar_valor_monetario(abs(valor_total)))
+        with col3:
+            despesas_count = len(df_final[df_final["Valor"] < 0])
+            st.metric("💳 Despesas", despesas_count)
+        
+        # Tabela formatada com descrições personalizadas
+        df_display_todas = formatar_df_com_descricoes(df_final.head(50))
+        # Para cartão, mostrar valores como positivos na tabela
+        if "Valor" in df_display_todas.columns:
+            df_display_todas["Valor"] = df_display_todas["Valor"].abs()
+            df_display_todas = formatar_df_monetario(df_display_todas)
+        
+        st.dataframe(
+            df_display_todas,
+            use_container_width=True,
+            height=400
+        )
+        
+        if len(df_final) > 50:
+            st.caption(f"📄 Exibindo 50 de {len(df_final)} transações (ordenadas por data mais recente)")
+    
+    # Abas para cada categoria
+    for i, categoria in enumerate(categorias_periodo, 1):
+        with tabs[i]:
+            # Filtrar transações da categoria
+            df_categoria = df_final[df_final["Categoria"] == categoria]
+            
+            st.markdown(f"**Transações da categoria: {categoria}**")
+            
+            # Mostrar resumo da categoria
+            total_cat = len(df_categoria)
+            valor_cat = df_categoria["Valor"].sum()
+            despesas_cat = len(df_categoria[df_categoria["Valor"] < 0])
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("💼 Transações", total_cat)
+            with col2:
+                st.metric("💰 Total", formatar_valor_monetario(abs(valor_cat)))
+            with col3:
+                st.metric("💳 Despesas", despesas_cat)
+            
+            if not df_categoria.empty:
+                # Tabela formatada da categoria com descrições personalizadas
+                df_display_cat = formatar_df_com_descricoes(df_categoria.head(50))
+                # Para cartão, mostrar valores como positivos na tabela
+                if "Valor" in df_display_cat.columns:
+                    df_display_cat["Valor"] = df_display_cat["Valor"].abs()
+                    df_display_cat = formatar_df_monetario(df_display_cat)
+                
+                st.dataframe(
+                    df_display_cat,
+                    use_container_width=True,
+                    height=400
+                )
+                
+                if len(df_categoria) > 50:
+                    st.caption(f"📄 Exibindo 50 de {len(df_categoria)} transações desta categoria")
+            else:
+                st.info("📭 Nenhuma transação encontrada nesta categoria para o período selecionado.")
 
-st.dataframe(
-    df_display.head(num_registros),
-    use_container_width=True,
-    height=400
-)
+else:
+    st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
+    st.info("💡 Ajuste os filtros de data ou categoria para ver as transações.")
 
 # Informações adicionais
 with st.expander("ℹ️ Informações Técnicas"):
@@ -263,6 +486,24 @@ with st.expander("ℹ️ Informações Técnicas"):
     
     if resumo_arquivos['periodo_faturas']['inicio']:
         st.write(f"**Período dos arquivos:** {resumo_arquivos['periodo_faturas']['inicio']} a {resumo_arquivos['periodo_faturas']['fim']}")
+    
+    # Estatísticas de personalizações
+    st.markdown("**📊 Personalizações aplicadas:**")
+    
+    cache_categorias = carregar_cache_categorias()
+    descricoes_personalizadas = carregar_descricoes_personalizadas()
+    transacoes_excluidas = carregar_transacoes_excluidas()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🏷️ Categorias personalizadas", len(cache_categorias))
+    with col2:
+        st.metric("📝 Descrições personalizadas", len(descricoes_personalizadas))
+    with col3:
+        st.metric("🗑️ Transações excluídas", len(transacoes_excluidas))
+    
+    if cache_categorias or descricoes_personalizadas or transacoes_excluidas:
+        st.info("💡 As personalizações feitas na página 'Gerenciar Transações' são aplicadas automaticamente aqui.")
     
     # Botão para limpar cache
     if st.button("🧹 Limpar Cache"):
