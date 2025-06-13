@@ -46,23 +46,27 @@ CATEGORIAS_DISPONIVEIS = [
     "Restaurante",
     "Academia",
     "Streaming",
-    "Telefone",
-    "Internet",
+    "Telefone",    "Internet",
     "Banco/Taxas",
     "Outros"
 ]
 
-CACHE_CATEGORIAS_FILE = "cache_categorias_usuario.json"
-CATEGORIAS_PERSONALIZADAS_FILE = "categorias_personalizadas.json"
-TRANSACOES_EXCLUIDAS_FILE = "transacoes_excluidas.json"
-DESCRICOES_PERSONALIZADAS_FILE = "descricoes_personalizadas.json"
-TRANSACOES_MANUAIS_FILE = "transacoes_manuais.json"
+# Importar funções para caminhos isolados por usuário
+from utils.config import (
+    get_cache_categorias_file,
+    get_categorias_personalizadas_file,
+    get_transacoes_excluidas_file,
+    get_descricoes_personalizadas_file,
+    get_transacoes_manuais_file,
+    get_current_user
+)
 
 def carregar_cache_categorias():
     """Carrega o cache de categorizações personalizadas do usuário"""
-    if os.path.exists(CACHE_CATEGORIAS_FILE):
+    cache_file = get_cache_categorias_file()
+    if os.path.exists(cache_file):
         try:
-            with open(CACHE_CATEGORIAS_FILE, 'r', encoding='utf-8') as f:
+            with open(cache_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return {}
@@ -71,7 +75,8 @@ def carregar_cache_categorias():
 def salvar_cache_categorias(cache):
     """Salva o cache de categorizações personalizadas"""
     try:
-        with open(CACHE_CATEGORIAS_FILE, 'w', encoding='utf-8') as f:
+        cache_file = get_cache_categorias_file()
+        with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
@@ -80,9 +85,10 @@ def salvar_cache_categorias(cache):
 
 def carregar_categorias_personalizadas():
     """Carrega as categorias personalizadas criadas pelo usuário"""
-    if os.path.exists(CATEGORIAS_PERSONALIZADAS_FILE):
+    categorias_file = get_categorias_personalizadas_file()
+    if os.path.exists(categorias_file):
         try:
-            with open(CATEGORIAS_PERSONALIZADAS_FILE, 'r', encoding='utf-8') as f:
+            with open(categorias_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return []
@@ -91,7 +97,8 @@ def carregar_categorias_personalizadas():
 def salvar_categorias_personalizadas(categorias):
     """Salva as categorias personalizadas"""
     try:
-        with open(CATEGORIAS_PERSONALIZADAS_FILE, 'w', encoding='utf-8') as f:
+        categorias_file = get_categorias_personalizadas_file()
+        with open(categorias_file, 'w', encoding='utf-8') as f:
             json.dump(categorias, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
@@ -108,7 +115,9 @@ def get_todas_categorias():
 def carregar_transacoes():
     """Carrega todas as transações disponíveis (OFX + manuais)"""
     def _load_data():
-        ofx_reader = OFXReader()
+        # Obter usuário atual para isolamento de dados
+        usuario_atual = get_current_user()
+        ofx_reader = OFXReader(usuario_atual)
         
         # Carregar dados dos arquivos OFX
         df_extratos = ofx_reader.buscar_extratos()
@@ -157,9 +166,10 @@ def carregar_transacoes():
 # Funções para gerenciar transações excluídas
 def carregar_transacoes_excluidas():
     """Carrega a lista de transações excluídas pelo usuário"""
-    if os.path.exists(TRANSACOES_EXCLUIDAS_FILE):
+    excluidas_file = get_transacoes_excluidas_file()
+    if os.path.exists(excluidas_file):
         try:
-            with open(TRANSACOES_EXCLUIDAS_FILE, 'r', encoding='utf-8') as f:
+            with open(excluidas_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return []
@@ -168,7 +178,8 @@ def carregar_transacoes_excluidas():
 def salvar_transacoes_excluidas(transacoes_excluidas):
     """Salva a lista de transações excluídas"""
     try:
-        with open(TRANSACOES_EXCLUIDAS_FILE, 'w', encoding='utf-8') as f:
+        excluidas_file = get_transacoes_excluidas_file()
+        with open(excluidas_file, 'w', encoding='utf-8') as f:
             json.dump(transacoes_excluidas, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
@@ -225,9 +236,10 @@ def filtrar_transacoes_excluidas(df):
 # Funções para gerenciar descrições personalizadas
 def carregar_descricoes_personalizadas():
     """Carrega o cache de descrições personalizadas do usuário"""
-    if os.path.exists(DESCRICOES_PERSONALIZADAS_FILE):
+    descricoes_file = get_descricoes_personalizadas_file()
+    if os.path.exists(descricoes_file):
         try:
-            with open(DESCRICOES_PERSONALIZADAS_FILE, 'r', encoding='utf-8') as f:
+            with open(descricoes_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return {}
@@ -236,7 +248,8 @@ def carregar_descricoes_personalizadas():
 def salvar_descricoes_personalizadas(descricoes):
     """Salva o cache de descrições personalizadas"""
     try:
-        with open(DESCRICOES_PERSONALIZADAS_FILE, 'w', encoding='utf-8') as f:
+        descricoes_file = get_descricoes_personalizadas_file()
+        with open(descricoes_file, 'w', encoding='utf-8') as f:
             json.dump(descricoes, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
@@ -278,9 +291,10 @@ def remover_descricao_personalizada(row):
 # Funções para gerenciar transações manuais
 def carregar_transacoes_manuais():
     """Carrega as transações manuais criadas pelo usuário"""
-    if os.path.exists(TRANSACOES_MANUAIS_FILE):
+    manuais_file = get_transacoes_manuais_file()
+    if os.path.exists(manuais_file):
         try:
-            with open(TRANSACOES_MANUAIS_FILE, 'r', encoding='utf-8') as f:
+            with open(manuais_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return []
@@ -289,7 +303,8 @@ def carregar_transacoes_manuais():
 def salvar_transacoes_manuais(transacoes):
     """Salva as transações manuais"""
     try:
-        with open(TRANSACOES_MANUAIS_FILE, 'w', encoding='utf-8') as f:
+        manuais_file = get_transacoes_manuais_file()
+        with open(manuais_file, 'w', encoding='utf-8') as f:
             json.dump(transacoes, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
@@ -1542,8 +1557,9 @@ with st.expander("⚙️ Opções Avançadas"):
     with col1:
         if st.button("🗑️ Limpar Todas as Categorizações", type="secondary"):
             if st.button("⚠️ Confirmar Limpeza", type="secondary"):
-                if os.path.exists(CACHE_CATEGORIAS_FILE):
-                    os.remove(CACHE_CATEGORIAS_FILE)
+                cache_file = get_cache_categorias_file()
+                if os.path.exists(cache_file):
+                    os.remove(cache_file)
                     st.success("✅ Todas as categorizações personalizadas foram removidas!")
                     st.cache_data.clear()
                     st.rerun()

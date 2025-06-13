@@ -8,7 +8,7 @@ import hashlib
 
 from componentes.profile_pic_component import boas_vindas_com_foto
 from database import get_connection, create_tables, remover_usuario, get_user_role
-from utils.config import ENABLE_CACHE
+from utils.config import ENABLE_CACHE, get_current_user, get_descricoes_personalizadas_file, get_transacoes_excluidas_file
 from utils.exception_handler import ExceptionHandler
 from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario, calcular_resumo_financeiro
@@ -211,7 +211,8 @@ st.title("🏠 Dashboard Financeiro")
 # Cache do OFX Reader
 @st.cache_resource(ttl=300)
 def get_ofx_reader():
-    return OFXReader()
+    usuario_atual = get_current_user()
+    return OFXReader(usuario_atual)
 
 @st.cache_data(ttl=600)
 def carregar_dados_home(usuario, force_refresh=False):
@@ -293,7 +294,7 @@ def carregar_dados_home(usuario, force_refresh=False):
                     pass  # Em caso de erro, manter categorizações originais
             
             # Aplicar filtro de transações excluídas
-            transacoes_excluidas_file = "transacoes_excluidas.json"
+            transacoes_excluidas_file = get_transacoes_excluidas_file()
             if os.path.exists(transacoes_excluidas_file):
                 try:
                     import json
@@ -344,7 +345,7 @@ def gerar_hash_transacao(row):
 
 def carregar_descricoes_personalizadas():
     """Carrega o cache de descrições personalizadas do usuário"""
-    descricoes_file = "descricoes_personalizadas.json"
+    descricoes_file = get_descricoes_personalizadas_file()
     if os.path.exists(descricoes_file):
         try:
             with open(descricoes_file, 'r', encoding='utf-8') as f:
@@ -419,6 +420,20 @@ if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação", type="prim
     st.rerun()
 
 # Carregar dados principais
+usuario = st.session_state.get('usuario', 'default')
+
+# Migração automática de dados legados para o usuário atual
+try:
+    from utils.user_data_manager import user_data_manager
+    migrated_files = user_data_manager.copy_legacy_data_to_user(usuario)
+    if migrated_files:
+        st.info(f"📦 **Migração automática**: {len(migrated_files)} arquivos foram migrados para seu perfil de usuário.")
+        with st.expander("Ver arquivos migrados"):
+            for file in migrated_files:
+                st.text(f"• {file}")
+except Exception as e:
+    st.error(f"Erro na migração automática: {e}")
+
 saldos_info, df = carregar_dados_home(usuario)
 
 # Verificar se há dados

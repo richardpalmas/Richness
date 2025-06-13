@@ -14,9 +14,18 @@ class OFXReader:
     Substitui completamente o PluggyConnector seguindo os princípios de minimalismo e eficiência.
     """
     
-    def __init__(self):
-        self.extratos_dir = Path("extratos")
-        self.faturas_dir = Path("faturas")
+    def __init__(self, username=None):
+        # Obter diretórios isolados por usuário
+        try:
+            from utils.config import get_user_ofx_directories
+            extratos_path, faturas_path = get_user_ofx_directories(username)
+            self.extratos_dir = Path(extratos_path)
+            self.faturas_dir = Path(faturas_path)
+        except ImportError:
+            # Fallback para compatibilidade
+            self.extratos_dir = Path("extratos")
+            self.faturas_dir = Path("faturas")
+        
         self._cache = {}
         
     def _parse_ofx_file(self, file_path: Path) -> Dict:

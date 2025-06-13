@@ -18,10 +18,13 @@ from utils.exception_handler import ExceptionHandler
 # Configuração da página
 st.set_page_config(page_title="Cartão de Crédito", layout="wide")
 
-# Arquivos de cache e personalização
-CACHE_CATEGORIAS_FILE = "cache_categorias_usuario.json"
-DESCRICOES_PERSONALIZADAS_FILE = "descricoes_personalizadas.json"
-TRANSACOES_EXCLUIDAS_FILE = "transacoes_excluidas.json"
+# Arquivos de cache e personalização (agora isolados por usuário)
+from utils.config import (
+    get_cache_categorias_file,
+    get_descricoes_personalizadas_file,
+    get_transacoes_excluidas_file,
+    get_current_user
+)
 
 # Funções para sincronização com personalizações do usuário
 def gerar_hash_transacao(row):
@@ -33,9 +36,10 @@ def gerar_hash_transacao(row):
 
 def carregar_cache_categorias():
     """Carrega o cache de categorizações personalizadas do usuário"""
-    if os.path.exists(CACHE_CATEGORIAS_FILE):
+    cache_file = get_cache_categorias_file()
+    if os.path.exists(cache_file):
         try:
-            with open(CACHE_CATEGORIAS_FILE, 'r', encoding='utf-8') as f:
+            with open(cache_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return {}
@@ -43,9 +47,10 @@ def carregar_cache_categorias():
 
 def carregar_descricoes_personalizadas():
     """Carrega o cache de descrições personalizadas do usuário"""
-    if os.path.exists(DESCRICOES_PERSONALIZADAS_FILE):
+    descricoes_file = get_descricoes_personalizadas_file()
+    if os.path.exists(descricoes_file):
         try:
-            with open(DESCRICOES_PERSONALIZADAS_FILE, 'r', encoding='utf-8') as f:
+            with open(descricoes_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return {}
@@ -53,9 +58,10 @@ def carregar_descricoes_personalizadas():
 
 def carregar_transacoes_excluidas():
     """Carrega a lista de transações excluídas pelo usuário"""
-    if os.path.exists(TRANSACOES_EXCLUIDAS_FILE):
+    excluidas_file = get_transacoes_excluidas_file()
+    if os.path.exists(excluidas_file):
         try:
-            with open(TRANSACOES_EXCLUIDAS_FILE, 'r', encoding='utf-8') as f:
+            with open(excluidas_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
             return []
@@ -126,7 +132,8 @@ st.info("🔄 **Sincronização ativa:** Esta página reflete automaticamente to
 # Cache do leitor OFX
 @st.cache_resource(ttl=300)
 def get_ofx_reader():
-    return OFXReader()
+    usuario_atual = get_current_user()
+    return OFXReader(usuario_atual)
 
 # Buscar dados com cache
 @st.cache_data(ttl=600, show_spinner="Carregando transações...")
