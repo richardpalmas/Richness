@@ -114,35 +114,26 @@ def mostrar_formulario_login():
             """)
 
 def autenticar_usuario_v2(usuario, senha):
-    """Autentica usuário usando apenas o Backend V2"""
+    """Autentica usuário usando Backend V2 com senhas criptografadas"""
     try:
         # Inicializar Backend V2
         db_manager = DatabaseManager()
         repository_manager = RepositoryManager(db_manager)
         user_repo = repository_manager.get_repository('usuarios')
-          # Buscar usuário no V2
-        user_data = user_repo.obter_usuario_por_username(usuario)
         
-        if not user_data:
-            return {
-                'success': False,
-                'message': 'Usuário não encontrado no Backend V2. Execute a migração obrigatória.'
-            }
-          # Para o Backend V2, autenticação simplificada por username
-        # (Sistema V2 não tem campo senha_hash na tabela usuarios)
-        if len(senha) > 0:  # Qualquer senha não vazia é aceita por enquanto
-            # Atualizar último login
-            user_repo.atualizar_ultimo_login(user_data['id'])
-            
+        # Verificar senha usando método seguro
+        user_data = user_repo.verificar_senha(usuario, senha)
+        
+        if user_data:
             return {
                 'success': True,
-                'message': 'Login realizado com sucesso (Backend V2)',
+                'message': 'Login realizado com sucesso (Backend V2 Seguro)',
                 'user_data': user_data
             }
         else:
             return {
                 'success': False,
-                'message': 'Digite uma senha'
+                'message': 'Usuário não encontrado ou senha incorreta'
             }
             
     except Exception as e:

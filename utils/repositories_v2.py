@@ -11,6 +11,7 @@ import hashlib
 import json
 from functools import lru_cache
 import logging
+import bcrypt
 
 class BaseRepository:
     """Classe base para todos os repositories com funcionalidades comuns"""
@@ -103,6 +104,94 @@ class UsuarioRepository(BaseRepository):
         return [dict(row) for row in result]
         result = self.db.executar_query("SELECT * FROM usuarios ORDER BY username", [])
         return [dict(row) for row in result]
+
+    def criar_usuario_com_senha(self, username: str, password: str, email: Optional[str] = None) -> int:
+        """Cria novo usuário com senha criptografada"""
+        import bcrypt
+        
+        self._log_operation("criar_usuario_com_senha", f"Username: {username}")
+        
+        # Gerar hash da senha usando bcrypt
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        # Gerar user_hash único
+        user_hash = hashlib.md5(f"{username}_{datetime.now().isoformat()}".encode()).hexdigest()[:16]
+        
+        return self.db.executar_insert("""
+            INSERT INTO usuarios (username, user_hash, password_hash, email) 
+            VALUES (?, ?, ?, ?)
+        """, [username, user_hash, password_hash, email])
+    
+    def atualizar_senha(self, user_id: int, nova_senha: str) -> bool:
+        """Atualiza senha do usuário com criptografia segura"""
+        import bcrypt
+        
+        self._log_operation("atualizar_senha", f"User ID: {user_id}")
+          # Gerar novo hash da senha
+        password_hash = bcrypt.hashpw(nova_senha.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        affected = self.db.executar_update(
+            "UPDATE usuarios SET password_hash = ? WHERE id = ?",
+            [password_hash, user_id]
+        )
+        return affected > 0
+    
+    def verificar_senha(self, username: str, password: str) -> Optional[Dict[str, Any]]:
+        """Verifica senha e retorna dados do usuário se válida"""
+        import bcrypt
+        
+        self._log_operation("verificar_senha", f"Username: {username}")
+        
+        # Buscar usuário
+        user_data = self.obter_usuario_por_username(username)
+        if not user_data:
+            return None
+        
+        stored_hash = user_data.get('password_hash')
+        if not stored_hash:
+            # Usuário não tem senha definida (migração pendente)
+            return None
+        
+        # Verificar senha
+        try:
+            if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+                # Atualizar último login
+                self.atualizar_ultimo_login(user_data['id'])
+                return user_data
+        except Exception as e:
+            self._log_operation("verificar_senha_error", f"Error: {str(e)}")
+        
+        return None
+    
+    def migrar_senha_legado(self, username: str, senha_legado_hash: str) -> bool:
+        """Migra hash de senha do sistema legado para bcrypt"""
+        import bcrypt
+        
+        self._log_operation("migrar_senha_legado", f"Username: {username}")
+        
+        user_data = self.obter_usuario_por_username(username)
+        if not user_data:
+            return False
+        
+        # Se já tem password_hash, não migrar
+        if user_data.get('password_hash'):
+            return True
+        
+        # Para migração, vamos assumir que o hash legado é a senha temporária
+        # Em produção real, você precisaria de uma estratégia melhor
+        try:
+            # Converter hash SHA-256 para bcrypt (estratégia temporária)
+            temp_password = senha_legado_hash[:12]  # Usar parte do hash como senha temp
+            password_hash = bcrypt.hashpw(temp_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+            affected = self.db.executar_update(
+                "UPDATE usuarios SET password_hash = ? WHERE id = ?",
+                [password_hash, user_data['id']]
+            )
+            return affected > 0
+        except Exception as e:
+            self._log_operation("migrar_senha_error", f"Error: {str(e)}")
+            return False
 
 class TransacaoRepository(BaseRepository):
     """Repository para operações com transações"""

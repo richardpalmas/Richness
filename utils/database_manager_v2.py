@@ -122,6 +122,7 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT UNIQUE NOT NULL,
                     user_hash TEXT UNIQUE NOT NULL,
+                    password_hash TEXT, -- Hash bcrypt da senha
                     email TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_login TIMESTAMP,
