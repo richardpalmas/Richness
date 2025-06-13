@@ -56,81 +56,8 @@ class UserDataManager:
         
         # Criar diretórios se não existirem
         os.makedirs(extratos_dir, exist_ok=True)
-        os.makedirs(faturas_dir, exist_ok=True)
-        
+        os.makedirs(faturas_dir, exist_ok=True)        
         return extratos_dir, faturas_dir
-    
-    def copy_legacy_data_to_user(self, username=None):
-        """
-        Copia dados legados (arquivos na raiz) para o diretório do usuário.
-        Usado na migração inicial.
-        """
-        if username is None:
-            username = self._get_current_user()
-        
-        user_dir = self.get_user_directory(username)
-        
-        # Lista de arquivos que devem ser migrados
-        legacy_files = [
-            "cache_categorias_usuario.json",
-            "categorias_personalizadas.json", 
-            "descricoes_personalizadas.json",
-            "transacoes_excluidas.json",
-            "transacoes_manuais.json"
-        ]
-        
-        migrated_files = []
-        
-        for filename in legacy_files:
-            legacy_path = filename
-            user_path = os.path.join(user_dir, filename)
-            
-            # Se arquivo legacy existe e arquivo do usuário não existe
-            if os.path.exists(legacy_path) and not os.path.exists(user_path):
-                try:
-                    # Copiar conteúdo
-                    with open(legacy_path, 'r', encoding='utf-8') as src:
-                        content = src.read()
-                    
-                    with open(user_path, 'w', encoding='utf-8') as dst:
-                        dst.write(content)
-                    
-                    migrated_files.append(filename)
-                except Exception as e:
-                    st.error(f"Erro ao migrar {filename}: {e}")
-        
-        # Migrar diretórios de arquivos OFX
-        extratos_dir, faturas_dir = self.get_user_ofx_directories(username)
-        
-        # Copiar extratos se existirem na raiz
-        if os.path.exists("extratos") and os.path.isdir("extratos"):
-            try:
-                import shutil
-                for file in os.listdir("extratos"):
-                    if file.endswith('.ofx'):
-                        src_path = os.path.join("extratos", file)
-                        dst_path = os.path.join(extratos_dir, file)
-                        if not os.path.exists(dst_path):
-                            shutil.copy2(src_path, dst_path)
-                            migrated_files.append(f"extratos/{file}")
-            except Exception as e:
-                st.error(f"Erro ao migrar extratos: {e}")
-        
-        # Copiar faturas se existirem na raiz
-        if os.path.exists("faturas") and os.path.isdir("faturas"):
-            try:
-                import shutil
-                for file in os.listdir("faturas"):
-                    if file.endswith('.ofx'):
-                        src_path = os.path.join("faturas", file)
-                        dst_path = os.path.join(faturas_dir, file)
-                        if not os.path.exists(dst_path):
-                            shutil.copy2(src_path, dst_path)
-                            migrated_files.append(f"faturas/{file}")
-            except Exception as e:
-                st.error(f"Erro ao migrar faturas: {e}")
-        
-        return migrated_files
     
     def backup_user_data(self, username=None):
         """Cria backup dos dados do usuário"""

@@ -15,10 +15,42 @@ from utils.formatacao import formatar_valor_monetario, formatar_df_monetario
 from utils.ofx_reader import OFXReader
 from utils.exception_handler import ExceptionHandler
 
+# Importações do novo backend V2
+from utils.database_manager_v2 import DatabaseManager
+from utils.repositories_v2 import RepositoryManager
+from services.transacao_service_v2 import TransacaoService
+from utils.database_monitoring import DatabaseMonitor
+
 # Configuração da página
 st.set_page_config(page_title="Cartão de Crédito", layout="wide")
 
-# Arquivos de cache e personalização (agora isolados por usuário)
+# Verificar autenticação
+verificar_autenticacao()
+
+# Inicializar novo backend V2
+@st.cache_resource
+def init_backend_v2():
+    """Inicializa o novo backend com cache para melhor performance"""
+    try:
+        # Inicializar componentes do novo backend
+        db_manager = DatabaseManager()
+        repository_manager = RepositoryManager(db_manager)
+        transacao_service = TransacaoService()
+        monitor = DatabaseMonitor(db_manager)
+        
+        return {
+            'db_manager': db_manager,
+            'repository_manager': repository_manager,
+            'transacao_service': transacao_service,
+            'monitor': monitor
+        }
+    except Exception as e:
+        # Fallback para backend antigo em caso de erro
+        st.warning(f"⚠️ Usando backend legado: {str(e)}")
+        return None
+
+# Inicializar backend
+backend_v2 = init_backend_v2()
 from utils.config import (
     get_cache_categorias_file,
     get_descricoes_personalizadas_file,
@@ -138,8 +170,36 @@ def get_ofx_reader():
 # Buscar dados com cache
 @st.cache_data(ttl=600, show_spinner="Carregando transações...")
 def carregar_dados_cartoes(dias):
-    """Carregar dados de cartões com cache e aplicar personalizações do usuário"""
+    """Carregar dados de cartões com cache e aplicar personalizações do usuário - Nova versão com Backend V2"""
     def _load_data():
+        # Tentar usar o novo backend V2
+        if backend_v2:
+            try:
+                transacao_service = backend_v2['transacao_service']
+                usuario_atual = get_current_user()
+                
+                # Carregar transações de cartão usando o novo serviço
+                df = transacao_service.listar_transacoes_cartao(usuario_atual, dias_limite=dias)
+                
+                if not df.empty:
+                    # Garantir que as colunas estão no formato correto
+                    df["Data"] = pd.to_datetime(df["Data"])
+                    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+                    
+                    # Remover valores nulos
+                    df = df.dropna(subset=["Valor"])
+                    
+                    # Ordenar por data (mais recente primeiro)
+                    df = df.sort_values("Data", ascending=False)
+                
+                return df
+                    
+            except Exception as e:
+                st.warning(f"⚠️ Erro no backend V2, usando fallback: {str(e)}")
+                # Fallback para método antigo
+                pass
+        
+        # Método antigo (fallback)
         ofx_reader = get_ofx_reader()
         df = ofx_reader.buscar_cartoes(dias)
         

@@ -110,15 +110,30 @@ dmypy.json
 # Streamlit
 .streamlit/
 
-# Project specific
+# Project specific - Sensitive data
 cache/
 logs/
 profile_pics/
 backups/
+user_data/
+user_data/**
+*.db
 *.db-shm
 *.db-wal
 .session_key
 .encryption_key
+
+# Financial data protection (CRITICAL)
+extratos/
+extratos/**
+faturas/
+faturas/**
+*.ofx
+*.qif
+
+# Legacy disabled folders (temporary migration artifacts)
+*_LEGACY_DISABLED/
+*_LEGACY_DISABLED/**
 
 # Debug files
 debug_*.py
