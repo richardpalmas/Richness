@@ -681,8 +681,7 @@ class TransacaoService:
             data_fim = datetime.now().strftime('%Y-%m-%d')
             data_inicio = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d')  # 2 anos
             
-            return self.transacao_repo.obter_transacoes_periodo(
-                user_id, data_inicio, data_fim, 
+            return self.transacao_repo.obter_transacoes_periodo(                user_id, data_inicio, data_fim, 
                 categorias=None, incluir_excluidas=False, limite=limite
             )
             
@@ -701,9 +700,9 @@ class TransacaoService:
             
             # Filtrar apenas transações de cartão (origem contém 'fatura' ou 'cartao')
             mask_cartao = (
-                df_todas['Origem'].str.contains('fatura', case=False, na=False) |
-                df_todas['Origem'].str.contains('cartao', case=False, na=False) |
-                df_todas['Origem'].str.contains('credit', case=False, na=False)
+                df_todas['origem'].str.contains('fatura', case=False, na=False) |
+                df_todas['origem'].str.contains('cartao', case=False, na=False) |
+                df_todas['origem'].str.contains('credit', case=False, na=False)
             )
             
             df_cartao = df_todas[mask_cartao].copy()
@@ -712,7 +711,17 @@ class TransacaoService:
             if dias_limite > 0:
                 from datetime import datetime, timedelta
                 data_limite = datetime.now() - timedelta(days=dias_limite)
-                df_cartao = df_cartao[pd.to_datetime(df_cartao['Data']) >= data_limite]
+                df_cartao = df_cartao[pd.to_datetime(df_cartao['data']) >= data_limite]
+            
+            # Converter colunas para o formato esperado pela página Cartão (compatibilidade)
+            if not df_cartao.empty:
+                df_cartao = df_cartao.rename(columns={
+                    'data': 'Data',
+                    'descricao': 'Descrição',
+                    'valor': 'Valor',
+                    'categoria': 'Categoria',
+                    'origem': 'Origem'
+                })
             
             return df_cartao
             

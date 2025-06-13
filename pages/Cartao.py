@@ -1,62 +1,56 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import date, timedelta
-from dotenv import load_dotenv
+from datetime import date, timedelta, datetime
 import json
 import os
 import hashlib
 
 from componentes.profile_pic_component import boas_vindas_com_foto
-from database import get_connection
-from utils.auth import verificar_autenticacao
-from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario
-from utils.ofx_reader import OFXReader
-from utils.exception_handler import ExceptionHandler
-
-# Importações do novo backend V2
-from utils.database_manager_v2 import DatabaseManager
-from utils.repositories_v2 import RepositoryManager
-from services.transacao_service_v2 import TransacaoService
-from utils.database_monitoring import DatabaseMonitor
-
-# Configuração da página
-st.set_page_config(page_title="Cartão de Crédito", layout="wide")
-
-# Verificar autenticação
-verificar_autenticacao()
-
-# Inicializar novo backend V2
-@st.cache_resource
-def init_backend_v2():
-    """Inicializa o novo backend com cache para melhor performance"""
-    try:
-        # Inicializar componentes do novo backend
-        db_manager = DatabaseManager()
-        repository_manager = RepositoryManager(db_manager)
-        transacao_service = TransacaoService()
-        monitor = DatabaseMonitor(db_manager)
-        
-        return {
-            'db_manager': db_manager,
-            'repository_manager': repository_manager,
-            'transacao_service': transacao_service,
-            'monitor': monitor
-        }
-    except Exception as e:
-        # Fallback para backend antigo em caso de erro
-        st.warning(f"⚠️ Usando backend legado: {str(e)}")
-        return None
-
-# Inicializar backend
-backend_v2 = init_backend_v2()
+from utils.filtros import filtro_categorias, aplicar_filtros
 from utils.config import (
     get_cache_categorias_file,
     get_descricoes_personalizadas_file,
     get_transacoes_excluidas_file,
     get_current_user
 )
+
+# BACKEND V2 OBRIGATÓRIO - Importações exclusivas
+from utils.database_manager_v2 import DatabaseManager
+from utils.repositories_v2 import RepositoryManager
+from services.transacao_service_v2 import TransacaoService
+
+# Configuração da página
+st.set_page_config(page_title="Cartão de Crédito V2", layout="wide")
+
+# Verificar autenticação
+def verificar_autenticacao():
+    if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
+        st.error("❌ Acesso negado! Faça login na página inicial.")
+        st.stop()
+
+verificar_autenticacao()
+
+# Inicializar Backend V2 (obrigatório)
+@st.cache_resource
+def init_backend_v2_cartao():
+    """Inicializa o Backend V2 para a página de Cartão"""
+    try:
+        db_manager = DatabaseManager()
+        repository_manager = RepositoryManager(db_manager)
+        transacao_service = TransacaoService()
+        
+        return {
+            'db_manager': db_manager,
+            'repository_manager': repository_manager,
+            'transacao_service': transacao_service
+        }
+    except Exception as e:
+        st.error(f"❌ Erro ao inicializar Backend V2: {e}")
+        st.stop()
+
+backend_v2 = init_backend_v2_cartao()
 
 # Funções para sincronização com personalizações do usuário
 def gerar_hash_transacao(row):
@@ -148,213 +142,223 @@ def aplicar_personalizacoes_usuario(df):
     
     return df
 
-# Verificação de autenticação
-verificar_autenticacao()
+# Obter usuário da sessão
 usuario = st.session_state.get('usuario', 'default')
 
-# Exibição de foto de perfil e mensagem de boas-vindas
+# Boas-vindas com foto de perfil
 if usuario:
     boas_vindas_com_foto(usuario)
 
-st.title("💳 Cartão de Crédito")
+# Título principal
+st.title("💳 Cartão de Crédito V2")
+st.markdown("**Análise completa de transações de cartão de crédito com Backend V2**")
 
 # Aviso sobre sincronização
 st.info("🔄 **Sincronização ativa:** Esta página reflete automaticamente todas as personalizações (categorias, descrições, exclusões) feitas na página 'Gerenciar Transações'.")
 
-# Cache do leitor OFX
-@st.cache_resource(ttl=300)
-def get_ofx_reader():
-    usuario_atual = get_current_user()
-    return OFXReader(usuario_atual)
-
-# Buscar dados com cache
-@st.cache_data(ttl=600, show_spinner="Carregando transações...")
-def carregar_dados_cartoes(dias):
-    """Carregar dados de cartões com cache e aplicar personalizações do usuário - Nova versão com Backend V2"""
-    def _load_data():
-        # Tentar usar o novo backend V2
-        if backend_v2:
-            try:
-                transacao_service = backend_v2['transacao_service']
-                usuario_atual = get_current_user()
-                
-                # Carregar transações de cartão usando o novo serviço
-                df = transacao_service.listar_transacoes_cartao(usuario_atual, dias_limite=dias)
-                
-                if not df.empty:
-                    # Garantir que as colunas estão no formato correto
-                    df["Data"] = pd.to_datetime(df["Data"])
-                    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
-                    
-                    # Remover valores nulos
-                    df = df.dropna(subset=["Valor"])
-                    
-                    # Ordenar por data (mais recente primeiro)
-                    df = df.sort_values("Data", ascending=False)
-                
-                return df
-                    
-            except Exception as e:
-                st.warning(f"⚠️ Erro no backend V2, usando fallback: {str(e)}")
-                # Fallback para método antigo
-                pass
+# Carregar dados de cartão usando Backend V2
+@st.cache_data(ttl=600, show_spinner="Carregando transações de cartão...")
+def carregar_dados_cartao_v2(usuario, dias_limite):
+    """Carrega dados de cartão usando APENAS o Backend V2 com personalizações"""
+    try:
+        transacao_service = backend_v2['transacao_service']
         
-        # Método antigo (fallback)
-        ofx_reader = get_ofx_reader()
-        df = ofx_reader.buscar_cartoes(dias)
+        # Carregar transações de cartão
+        df_cartao = transacao_service.listar_transacoes_cartao(usuario, dias_limite)
         
-        if not df.empty:
+        if not df_cartao.empty:
             # Garantir que as colunas estão no formato correto
-            df["Data"] = pd.to_datetime(df["Data"])
-            df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+            df_cartao["Data"] = pd.to_datetime(df_cartao["Data"])
+            df_cartao["Valor"] = pd.to_numeric(df_cartao["Valor"], errors="coerce")
             
             # Remover valores nulos
-            df = df.dropna(subset=["Valor"])
+            df_cartao = df_cartao.dropna(subset=["Valor"])
             
             # Aplicar personalizações do usuário (categorias, descrições, exclusões)
-            df = aplicar_personalizacoes_usuario(df)
+            df_cartao = aplicar_personalizacoes_usuario(df_cartao)
             
             # Ordenar por data (mais recente primeiro)
-            df = df.sort_values("Data", ascending=False)
+            df_cartao = df_cartao.sort_values("Data", ascending=False)
         
-        return df
+        return df_cartao
+        
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar dados do cartão V2: {str(e)}")
+        return pd.DataFrame()
+
+# Sidebar - Configurações
+st.sidebar.header("⚙️ Configurações do Cartão V2")
+st.sidebar.markdown("**Backend V2 Ativo** 🚀")
+
+# Carregar dados iniciais para obter range de datas
+df_cartao_completo = carregar_dados_cartao_v2(usuario, 365)  # 1 ano para ter range completo
+
+# Sistema de seleção de período mais avançado
+st.sidebar.subheader("📅 Período de Análise")
+
+periodo_info = ""
+df_cartao = pd.DataFrame()
+
+if not df_cartao_completo.empty:
+    # Gerar lista de meses/anos disponíveis
+    df_cartao_completo['AnoMes'] = pd.to_datetime(df_cartao_completo['Data']).dt.strftime('%Y-%m')
+    meses_disponiveis = sorted(df_cartao_completo['AnoMes'].unique(), reverse=True)
     
-    return ExceptionHandler.safe_execute(
-        func=_load_data,
-        error_handler=ExceptionHandler.handle_generic_error,
-        default_return=pd.DataFrame()
+    if meses_disponiveis:
+        mes_ano_selecionado = st.sidebar.selectbox(
+            "Selecione o mês:",
+            meses_disponiveis,
+            index=0,
+            help="Escolha o mês/ano para análise detalhada"
+        )
+        
+        periodo_info = mes_ano_selecionado
+        
+        # Calcular data de início e fim do mês selecionado
+        ano, mes = map(int, mes_ano_selecionado.split('-'))
+        data_inicio = pd.Timestamp(year=ano, month=mes, day=1).date()
+        if mes == 12:
+            data_fim = pd.Timestamp(year=ano+1, month=1, day=1).date() - pd.Timedelta(days=1)
+        else:
+            data_fim = pd.Timestamp(year=ano, month=mes+1, day=1).date() - pd.Timedelta(days=1)
+        
+        # Usar dados do mês selecionado
+        df_cartao = df_cartao_completo[
+            (pd.to_datetime(df_cartao_completo["Data"]).dt.date >= data_inicio) & 
+            (pd.to_datetime(df_cartao_completo["Data"]).dt.date <= data_fim)
+        ]
+    else:
+        st.sidebar.warning("Nenhum mês disponível")
+        df_cartao = pd.DataFrame()
+        periodo_info = "Sem dados"
+else:
+    # Fallback para seleção simples se não há dados
+    periodo_opcoes = {
+        "Últimos 30 dias": 30,
+        "Últimos 60 dias": 60,
+        "Últimos 90 dias": 90,
+        "Últimos 180 dias": 180,
+        "Último ano": 365,
+        "Todos os dados": 0
+    }
+
+    periodo_selecionado = st.sidebar.selectbox(
+        "Selecione o período:",
+        list(periodo_opcoes.keys()),
+        index=2  # Padrão: 90 dias
     )
 
-# Obter leitor OFX
-ofx_reader = get_ofx_reader()
+    periodo_info = periodo_selecionado
+    dias_limite = periodo_opcoes[periodo_selecionado]
+    df_cartao = carregar_dados_cartao_v2(usuario, dias_limite)
 
-# Verificar arquivos disponíveis
-resumo_arquivos = ofx_reader.get_resumo_arquivos()
+# Informações do usuário
+if st.sidebar.expander("👤 Informações do Usuário"):
+    st.sidebar.write(f"**Usuário**: {usuario}")
+    st.sidebar.write(f"**Sistema**: Backend V2")
+    st.sidebar.write(f"**Período**: {periodo_info}")
 
-# Carregar todos os dados disponíveis
-# (para garantir que o filtro de data funcione corretamente)
-df_cartoes_raw = ofx_reader.buscar_cartoes(365)  # 1 ano para garantir datas amplas
+# Botão de Sair
+st.sidebar.markdown("---")
+if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação", type="primary"):
+    st.session_state.clear()
+    st.rerun()
 
-# Definir período padrão: últimos 30 dias, mas limitado ao range dos dados
-from datetime import timedelta, date
+# Verificar se temos dados para continuar
+if df_cartao.empty:
+    df_cartao = carregar_dados_cartao_v2(usuario, 90)  # Fallback para 90 dias
 
-data_fim_default = date.today()
-data_inicio_default = data_fim_default - timedelta(days=30)
-
-# Ajustar para não ultrapassar o range dos dados
-if not df_cartoes_raw.empty and "Data" in df_cartoes_raw.columns:
-    min_data_val = df_cartoes_raw["Data"].min()
-    max_data_val = df_cartoes_raw["Data"].max()
-    if hasattr(min_data_val, 'date'):
-        min_data = min_data_val.date()
-    else:
-        min_data = min_data_val
-    if hasattr(max_data_val, 'date'):
-        max_data = max_data_val.date()
-    else:
-        max_data = max_data_val
-    data_inicio_default = max(min_data, data_inicio_default)
-    data_fim_default = min(max_data, data_fim_default)
-
-# Carregar dados (sempre busca 365 dias para garantir todos os dados para o filtro)
-df_cartoes = carregar_dados_cartoes(365)
-
-# Garantir que a coluna 'Data' existe e está no formato datetime
-if not df_cartoes.empty:
-    if 'data' in df_cartoes.columns and 'Data' not in df_cartoes.columns:
-        df_cartoes['Data'] = pd.to_datetime(df_cartoes['data'])
-    elif 'Data' in df_cartoes.columns:
-        df_cartoes['Data'] = pd.to_datetime(df_cartoes['Data'])
-    else:
-        st.error("O arquivo de cartão não possui coluna de data válida.")
-        st.stop()
-else:
-    st.warning("Nenhuma transação encontrada para o período selecionado.")
+# Verificar se há dados
+if df_cartao.empty:
+    st.warning("📭 Nenhuma transação de cartão encontrada!")
+    st.info("💡 **Possíveis motivos:**")
+    st.markdown("""
+    1. 📁 Nenhum arquivo de fatura foi importado
+    2. 🗓️ O período selecionado não contém transações
+    3. 🔍 Os dados não foram migrados para o Backend V2
+    """)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Tentar Recarregar", type="primary"):
+            st.cache_data.clear()
+            st.rerun()
+    
+    with col2:
+        if st.button("📁 Ir para Atualizar Dados"):
+            st.switch_page("pages/Atualizar_Dados.py")
+    
     st.stop()
 
-# Gerar lista de meses/anos disponíveis
-if not df_cartoes.empty:
-    df_cartoes['AnoMes'] = df_cartoes['Data'].dt.strftime('%Y-%m')
-    meses_disponiveis = sorted(df_cartoes['AnoMes'].unique(), reverse=True)
-    if not meses_disponiveis:
-        st.warning("Nenhum mês disponível para seleção.")
-        st.stop()
-    mes_ano_selecionado = st.sidebar.selectbox(
-        "Selecione o mês",
-        meses_disponiveis,
-        index=0
-    )
-    ano, mes = map(int, mes_ano_selecionado.split('-'))
-    data_inicio = pd.Timestamp(year=ano, month=mes, day=1).date()
-    if mes == 12:
-        data_fim = pd.Timestamp(year=ano+1, month=1, day=1).date() - pd.Timedelta(days=1)
-    else:
-        data_fim = pd.Timestamp(year=ano, month=mes+1, day=1).date() - pd.Timedelta(days=1)
-else:
-    st.warning("Nenhuma transação encontrada para o período selecionado.")
-    st.stop()
+# Filtros adicionais de categorias
+st.subheader("🔍 Filtros Avançados")
 
-# Filtrar dados do mês selecionado
-df_cartoes_filtrado = df_cartoes[
-    (df_cartoes["Data"].dt.date >= data_inicio) & 
-    (df_cartoes["Data"].dt.date <= data_fim)
-]
-
-if df_cartoes_filtrado.empty:
-    st.warning("🔍 Nenhuma transação encontrada no período selecionado.")
-    st.stop()
-
-# Filtros adicionais
 col1, col2 = st.columns(2)
 
-with col2:
-    categorias_selecionadas = filtro_categorias(df_cartoes_filtrado)
+with col1:
+    st.markdown("**📊 Informações do Período**")
+    if not df_cartao.empty:
+        data_inicio_display = pd.to_datetime(df_cartao['Data']).min()
+        data_fim_display = pd.to_datetime(df_cartao['Data']).max()
+        st.info(f"📅 **Período**: {data_inicio_display.strftime('%d/%m/%Y')} a {data_fim_display.strftime('%d/%m/%Y')}")
 
-# Aplicar filtros
-df_final = aplicar_filtros(df_cartoes_filtrado, data_inicio, data_fim, categorias_selecionadas)
+with col2:
+    # Aplicar filtro de categorias
+    if not df_cartao.empty and 'Categoria' in df_cartao.columns:
+        categorias_selecionadas = filtro_categorias(df_cartao, titulo="Filtrar Categorias", key_prefix="cartao_v2")
+        
+        # Aplicar filtros se categorias foram selecionadas
+        if categorias_selecionadas:
+            df_final = df_cartao[df_cartao['Categoria'].isin(categorias_selecionadas)]
+        else:
+            df_final = df_cartao
+    else:
+        df_final = df_cartao
 
 if df_final.empty:
     st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
+    st.info("💡 Ajuste os filtros de categoria para ver as transações.")
     st.stop()
 
-# Resumo financeiro
-st.subheader("📊 Resumo do Cartão")
+# Dashboard principal
+st.subheader("📊 Resumo do Cartão V2")
 
-# Calcular métricas
-total_gastos = df_final["Valor"].sum()
-num_transacoes = len(df_final)
-gasto_medio = total_gastos / num_transacoes if num_transacoes > 0 else 0
-maior_gasto = df_final["Valor"].min() if not df_final.empty else 0  # Min porque valores negativos
+# Métricas principais usando dados filtrados
+total_transacoes = len(df_final)
+total_gastos = abs(df_final['Valor'].sum())  # Valores de cartão são geralmente negativos
+gasto_medio = total_gastos / total_transacoes if total_transacoes > 0 else 0
+maior_gasto = abs(df_final['Valor'].min()) if not df_final.empty else 0
 
-# Exibir métricas
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(
         "💸 Total de Gastos", 
-        formatar_valor_monetario(abs(total_gastos))
+        formatar_valor_monetario(total_gastos)
     )
 
 with col2:
     st.metric(
-        "📊 Número de Transações", 
-        f"{num_transacoes:,}"
+        "📊 Transações", 
+        f"{total_transacoes:,}"
     )
 
 with col3:
     st.metric(
         "💰 Gasto Médio", 
-        formatar_valor_monetario(abs(gasto_medio))
+        formatar_valor_monetario(gasto_medio)
     )
 
 with col4:
     st.metric(
         "🔥 Maior Gasto", 
-        formatar_valor_monetario(abs(maior_gasto))
+        formatar_valor_monetario(maior_gasto)
     )
 
+st.markdown("---")
+
 # Gráficos de análise
-st.subheader("📈 Análises")
+st.subheader("📈 Análises do Cartão")
 
 col1, col2 = st.columns(2)
 
@@ -369,7 +373,7 @@ with col1:
             categoria_gastos,
             names="Categoria",
             values="Valor_Abs",
-            title="Gastos por Categoria",
+            title="💸 Gastos por Categoria",
             template="plotly_white"
         )
         
@@ -378,39 +382,42 @@ with col1:
 
 with col2:
     # Gráfico de evolução temporal
-    df_temp = df_final.copy()
-    df_temp["Mes"] = df_temp["Data"].dt.to_period("M").astype(str)
-    evolucao_mensal = df_temp.groupby("Mes")["Valor"].sum().reset_index()
-    evolucao_mensal["Valor_Abs"] = evolucao_mensal["Valor"].abs()
-    
-    fig_evolucao = px.bar(
-        evolucao_mensal,
-        x="Mes",
-        y="Valor_Abs",
-        title="Gastos Mensais",
-        template="plotly_white"
-    )
-    
-    fig_evolucao.update_layout(height=400)
-    st.plotly_chart(fig_evolucao, use_container_width=True)
+    if not df_final.empty:
+        df_temp = df_final.copy()
+        df_temp["Data"] = pd.to_datetime(df_temp["Data"])
+        df_temp["Mes"] = df_temp["Data"].dt.to_period("M").astype(str)
+        evolucao_mensal = df_temp.groupby("Mes")["Valor"].sum().reset_index()
+        evolucao_mensal["Valor_Abs"] = evolucao_mensal["Valor"].abs()
+        
+        fig_evolucao = px.bar(
+            evolucao_mensal,
+            x="Mes",
+            y="Valor_Abs",
+            title="📊 Gastos Mensais",
+            template="plotly_white"
+        )
+        
+        fig_evolucao.update_layout(height=400)
+        st.plotly_chart(fig_evolucao, use_container_width=True)
 
 # Top gastos
-st.subheader("🔝 Maiores Gastos")
-top_gastos = df_final.nsmallest(10, "Valor")
+st.subheader("🔝 Maiores Gastos do Período")
+if not df_final.empty:
+    top_gastos = df_final.nsmallest(10, "Valor").copy()
+    
+    # Incluir coluna Nota se existe e tem dados
+    colunas_exibir = ["Data", "Descrição", "Valor", "Categoria"]
+    if "Nota" in top_gastos.columns and top_gastos["Nota"].notna().any() and (top_gastos["Nota"] != "").any():
+        colunas_exibir.insert(-1, "Nota")  # Inserir antes da Categoria
+    
+    top_gastos = top_gastos[colunas_exibir]
+    top_gastos["Valor"] = top_gastos["Valor"].abs()
+    top_gastos_formatado = formatar_df_monetario(top_gastos)
+    
+    st.dataframe(top_gastos_formatado, use_container_width=True)
 
-# Incluir coluna Nota se existe e tem dados
-colunas_exibir = ["Data", "Descrição", "Valor", "Categoria"]
-if "Nota" in top_gastos.columns and top_gastos["Nota"].notna().any() and (top_gastos["Nota"] != "").any():
-    colunas_exibir.insert(-1, "Nota")  # Inserir antes da Categoria
-
-top_gastos = top_gastos[colunas_exibir]
-top_gastos["Valor"] = top_gastos["Valor"].abs()
-top_gastos = formatar_df_monetario(top_gastos)
-
-st.dataframe(top_gastos, use_container_width=True)
-
-# Tabela completa de transações
-st.subheader("📋 Transações do Período")
+# Análise detalhada por categorias com abas
+st.subheader("📊 Transações por Categoria")
 
 # Função para formatar DataFrame com descrições personalizadas (igual à Home)
 def formatar_df_com_descricoes(df):
@@ -459,9 +466,8 @@ def formatar_df_com_descricoes(df):
     
     return df_formatado[colunas_ordenadas]
 
-# Obter categorias disponíveis no período filtrado
-if not df_final.empty:
-    categorias_periodo = sorted(df_final["Categoria"].unique())
+if not df_final.empty and 'Categoria' in df_final.columns:
+    categorias_periodo = sorted(df_final['Categoria'].unique())
     
     # Criar lista de abas: "Todas" + categorias específicas
     abas_disponiveis = ["📊 Todas"] + [f"🏷️ {cat}" for cat in categorias_periodo]
@@ -470,20 +476,20 @@ if not df_final.empty:
     tabs = st.tabs(abas_disponiveis)
     
     with tabs[0]:  # Aba "Todas"
-        st.markdown("**Todas as transações do cartão no período selecionado**")
+        st.markdown("**Todas as transações do cartão no período**")
         
         # Mostrar resumo
-        total_transacoes = len(df_final)
-        valor_total = df_final["Valor"].sum()
+        total_transacoes_aba = len(df_final)
+        valor_total_aba = abs(df_final["Valor"].sum())
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("💼 Total", total_transacoes)
+            st.metric("💼 Total", total_transacoes_aba)
         with col2:
-            st.metric("💰 Total Gasto", formatar_valor_monetario(abs(valor_total)))
+            st.metric("💰 Total Gasto", formatar_valor_monetario(valor_total_aba))
         with col3:
             despesas_count = len(df_final[df_final["Valor"] < 0])
-            st.metric("💳 Despesas", despesas_count)
+            st.metric("� Despesas", despesas_count)
         
         # Tabela formatada com descrições personalizadas
         df_display_todas = formatar_df_com_descricoes(df_final.head(50))
@@ -511,16 +517,16 @@ if not df_final.empty:
             
             # Mostrar resumo da categoria
             total_cat = len(df_categoria)
-            valor_cat = df_categoria["Valor"].sum()
+            valor_cat = abs(df_categoria["Valor"].sum())
             despesas_cat = len(df_categoria[df_categoria["Valor"] < 0])
             
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("💼 Transações", total_cat)
             with col2:
-                st.metric("💰 Total", formatar_valor_monetario(abs(valor_cat)))
+                st.metric("💰 Total", formatar_valor_monetario(valor_cat))
             with col3:
-                st.metric("💳 Despesas", despesas_cat)
+                st.metric("� Despesas", despesas_cat)
             
             if not df_categoria.empty:
                 # Tabela formatada da categoria com descrições personalizadas
@@ -540,19 +546,24 @@ if not df_final.empty:
                     st.caption(f"📄 Exibindo 50 de {len(df_categoria)} transações desta categoria")
             else:
                 st.info("📭 Nenhuma transação encontrada nesta categoria para o período selecionado.")
-
 else:
-    st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
-    st.info("💡 Ajuste os filtros de data ou categoria para ver as transações.")
+    st.info("📊 Nenhuma transação de cartão disponível para análise por categorias.")
 
-# Informações adicionais
-with st.expander("ℹ️ Informações Técnicas"):
-    st.write(f"**Período analisado:** {data_inicio} a {data_fim}")
-    st.write(f"**Total de registros:** {len(df_final):,}")
-    st.write(f"**Arquivos processados:** {resumo_arquivos['total_faturas']} faturas")
-    
-    if resumo_arquivos['periodo_faturas']['inicio']:
-        st.write(f"**Período dos arquivos:** {resumo_arquivos['periodo_faturas']['inicio']} a {resumo_arquivos['periodo_faturas']['fim']}")
+# Informações técnicas
+st.markdown("---")
+with st.expander("ℹ️ Informações Técnicas V2"):
+    if not df_final.empty:
+        data_inicio = pd.to_datetime(df_final['Data']).min()
+        data_fim = pd.to_datetime(df_final['Data']).max()
+        st.write(f"**Período analisado:** {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
+        st.write(f"**Total de registros:** {len(df_final):,}")
+        
+        # Análise por origem
+        if 'Origem' in df_final.columns:
+            origens = df_final['Origem'].value_counts()
+            st.write("**Origem dos dados:**")
+            for origem, count in origens.items():
+                st.write(f"- {origem}: {count} transações")
     
     # Estatísticas de personalizações
     st.markdown("**📊 Personalizações aplicadas:**")
@@ -572,15 +583,13 @@ with st.expander("ℹ️ Informações Técnicas"):
     if cache_categorias or descricoes_personalizadas or transacoes_excluidas:
         st.info("💡 As personalizações feitas na página 'Gerenciar Transações' são aplicadas automaticamente aqui.")
     
+    st.markdown("**🚀 Sistema:** Backend V2 com isolamento por usuário")
+    st.markdown("**🔒 Segurança:** Dados criptografados e auditados")
+    
     # Botão para limpar cache
-    if st.button("🧹 Limpar Cache"):
-        ofx_reader.limpar_cache()
+    if st.button("🧹 Limpar Cache V2"):
         st.cache_data.clear()
+        st.cache_resource.clear()
         st.success("Cache limpo! Recarregue a página para ver os dados atualizados.")
 
-# Botão sair sempre visível
-if st.session_state.get('autenticado', False):
-    if st.button('🚪 Sair', key='logout_btn'):
-        st.session_state.clear()
-        st.success('Você saiu do sistema.')
-        st.rerun()
+st.success("✅ **Página de Cartão V2 carregada com sucesso!** Todos os dados são específicos do seu usuário e isolados.")
