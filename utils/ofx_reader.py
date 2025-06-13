@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import json
 from datetime import datetime, date
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -208,22 +209,40 @@ class OFXReader:
     
     def _categorizar_transacao(self, descricao: str) -> str:
         """
-        Categorização simples baseada em palavras-chave.
-        Pode ser expandida no futuro com LLM se necessário.
+        Categorização híbrida: primeiro verifica categorizações personalizadas do usuário,
+        depois aplica regras baseadas em palavras-chave.
         """
+        # 1. Verificar categorizações personalizadas do usuário
+        descricao_normalizada = descricao.lower().strip()
+        cache_file = "cache_categorias_usuario.json"
+        
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cache_usuario = json.load(f)
+                
+                if descricao_normalizada in cache_usuario:
+                    return cache_usuario[descricao_normalizada]
+            except:
+                pass  # Em caso de erro, continuar com regras padrão
+        
+        # 2. Aplicar regras baseadas em palavras-chave (fallback)
         descricao = descricao.lower()
         
         # Categorias baseadas em palavras-chave
         categorias = {
-            'Alimentação': ['restaurante', 'lanchonete', 'supermercado', 'mercado', 'food', 'comida', 'ifood', 'uber eats'],
-            'Transporte': ['uber', 'taxi', 'combustivel', 'posto', 'gas', 'transporte', 'estacionamento'],
-            'Saúde': ['farmacia', 'hospital', 'clinica', 'medico', 'plano', 'saude'],
-            'Educação': ['escola', 'faculdade', 'curso', 'livro', 'educacao'],
-            'Lazer': ['cinema', 'teatro', 'netflix', 'spotify', 'youtube', 'steam', 'playstation', 'xbox'],
-            'Moradia': ['aluguel', 'condominio', 'luz', 'agua', 'gas', 'internet', 'telefone'],
-            'Vestuário': ['roupa', 'calcado', 'vestuario', 'moda'],
-            'Transferência': ['transferencia', 'pix', 'ted', 'doc'],
-            'Salário': ['salario', 'pagamento', 'vencimento']
+            'Alimentação': ['restaurante', 'lanchonete', 'supermercado', 'mercado', 'food', 'comida', 'ifood', 'uber eats', 'delivery', 'padaria', 'acougue'],
+            'Transporte': ['uber', 'taxi', 'combustivel', 'posto', 'gas', 'transporte', 'estacionamento', 'pedagio', 'onibus', 'metro'],
+            'Saúde': ['farmacia', 'hospital', 'clinica', 'medico', 'plano', 'saude', 'laboratorio', 'exame', 'consulta'],
+            'Educação': ['escola', 'faculdade', 'curso', 'livro', 'educacao', 'universidade', 'colegio', 'material escolar'],
+            'Lazer': ['cinema', 'teatro', 'netflix', 'spotify', 'youtube', 'steam', 'playstation', 'xbox', 'streaming', 'entretenimento'],
+            'Casa e Utilidades': ['aluguel', 'condominio', 'luz', 'agua', 'gas', 'internet', 'telefone', 'limpeza', 'manutencao'],
+            'Vestuário': ['roupa', 'calcado', 'vestuario', 'moda', 'sapato', 'camisa', 'calca'],
+            'Banco/Taxas': ['ITAU', 'LUIZA CRED', 'Pagamento de fatura', 'taxa', 'juros', 'tarifa', 'anuidade'],
+            'Transferências': ['transferencia', 'pix', 'ted', 'doc', 'saque', 'deposito'],
+            'Salário': ['salario', 'pagamento', 'remuneracao', 'ordenado'],
+            'Investimentos': ['investimento', 'aplicacao', 'cdb', 'tesouro', 'acao', 'fundo'],
+            'Compras Online': ['amazon', 'mercado livre', 'shopee', 'aliexpress', 'magazine luiza', 'casas bahia']
         }
         
         for categoria, palavras in categorias.items():

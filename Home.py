@@ -233,6 +233,24 @@ def carregar_dados_home(usuario, force_refresh=False):
             df["Data"] = pd.to_datetime(df["Data"])
             df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
             
+            # Aplicar categorizações personalizadas do usuário (MESMO CÓDIGO DA PÁGINA GERENCIAR_TRANSACOES)
+            cache_categorias_file = "cache_categorias_usuario.json"
+            if os.path.exists(cache_categorias_file):
+                try:
+                    import json
+                    with open(cache_categorias_file, 'r', encoding='utf-8') as f:
+                        cache = json.load(f)
+                    
+                    def aplicar_categoria_personalizada(row):
+                        descricao_normalizada = row["Descrição"].lower().strip()
+                        if descricao_normalizada in cache:
+                            return cache[descricao_normalizada]
+                        return row.get("Categoria", "Outros")
+                    
+                    df["Categoria"] = df.apply(aplicar_categoria_personalizada, axis=1)
+                except:
+                    pass  # Em caso de erro, manter categorizações originais
+            
             # Calcular saldos por origem
             saldos_info = {}
             for origem in df['Origem'].unique():
@@ -346,38 +364,73 @@ if df_filtrado.empty:
 # Gráficos
 st.subheader("📈 Análises")
 
+# Primeira linha: Distribuição por Categoria
 col1, col2 = st.columns(2)
 
 with col1:
-    # Gráfico de categorias
+    # Gráfico de categorias (apenas despesas)
     if "Categoria" in df_filtrado.columns:
-        categoria_resumo = df_filtrado.groupby("Categoria")["Valor"].sum().reset_index()
-        categoria_resumo["ValorAbs"] = categoria_resumo["Valor"].abs()
-        categoria_resumo = categoria_resumo.sort_values("ValorAbs", ascending=False)
+        # Filtrar apenas transações negativas (despesas)
+        df_despesas = df_filtrado[df_filtrado["Valor"] < 0]
         
-        fig_cat = px.pie(
-            categoria_resumo, 
-            names="Categoria", 
-            values="ValorAbs",
-            title="Distribuição por Categoria"
-        )
-        st.plotly_chart(fig_cat, use_container_width=True)
+        if not df_despesas.empty:
+            categoria_resumo_despesas = df_despesas.groupby("Categoria")["Valor"].sum().reset_index()
+            categoria_resumo_despesas["ValorAbs"] = categoria_resumo_despesas["Valor"].abs()
+            categoria_resumo_despesas = categoria_resumo_despesas.sort_values("ValorAbs", ascending=False)
+            
+            fig_cat_despesas = px.pie(
+                categoria_resumo_despesas, 
+                names="Categoria", 
+                values="ValorAbs",
+                title="Distribuição por Categoria (Despesas)",
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            st.plotly_chart(fig_cat_despesas, use_container_width=True)
+        else:
+            st.info("📊 Nenhuma despesa encontrada no período selecionado.")
 
 with col2:
-    # Gráfico de evolução temporal
-    if "Data" in df_filtrado.columns:
-        df_temp = df_filtrado.copy()
-        df_temp["AnoMes"] = df_temp["Data"].dt.to_period("M").astype(str)
-        evolucao = df_temp.groupby("AnoMes")["Valor"].sum().reset_index()
+    # Gráfico de categorias (apenas receitas)
+    if "Categoria" in df_filtrado.columns:
+        # Filtrar apenas transações positivas (receitas)
+        df_receitas = df_filtrado[df_filtrado["Valor"] > 0]
         
-        fig_evolucao = px.line(
-            evolucao, 
-            x="AnoMes", 
-            y="Valor",
-            title="Evolução Mensal",
-            markers=True
-        )
-        st.plotly_chart(fig_evolucao, use_container_width=True)
+        if not df_receitas.empty:
+            categoria_resumo_receitas = df_receitas.groupby("Categoria")["Valor"].sum().reset_index()
+            categoria_resumo_receitas = categoria_resumo_receitas.sort_values("Valor", ascending=False)
+            
+            fig_cat_receitas = px.pie(
+                categoria_resumo_receitas, 
+                names="Categoria", 
+                values="Valor",
+                title="Distribuição por Categoria (Receitas)",
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            st.plotly_chart(fig_cat_receitas, use_container_width=True)
+        else:
+            st.info("📊 Nenhuma receita encontrada no período selecionado.")
+
+# Segunda linha: Evolução Temporal
+st.markdown("---")
+if "Data" in df_filtrado.columns:
+    df_temp = df_filtrado.copy()
+    df_temp["AnoMes"] = df_temp["Data"].dt.to_period("M").astype(str)
+    evolucao = df_temp.groupby("AnoMes")["Valor"].sum().reset_index()
+    
+    fig_evolucao = px.line(
+        evolucao, 
+        x="AnoMes", 
+        y="Valor",
+        title="📈 Evolução Mensal do Saldo",
+        markers=True,
+        line_shape="spline"
+    )
+    fig_evolucao.update_layout(
+        xaxis_title="Período",
+        yaxis_title="Valor (R$)",
+        showlegend=False
+    )
+    st.plotly_chart(fig_evolucao, use_container_width=True)
 
 # Tabela de transações
 st.subheader("📋 Transações Recentes")
