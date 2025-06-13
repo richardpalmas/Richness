@@ -220,7 +220,6 @@ if usuarios:
                                 st.error(f"Erro ao remover usuário {u['usuario']}. Verifique os logs.")
                         except Exception as e:
                             st.error(f"Erro ao remover usuário {u['usuario']}: {str(e)}")
-                            print(f"Erro detalhado: {traceback.format_exc()}")
                 
                 with col_confirm2:
                     if st.button("❌ Não, cancelar", key=f"confirma_nao_{u['id']}", type="secondary"):

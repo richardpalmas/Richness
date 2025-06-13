@@ -150,11 +150,8 @@ if usuario:
     boas_vindas_com_foto(usuario)
 
 # Título principal
-st.title("💳 Cartão de Crédito V2")
+st.title("💳 Cartão de Crédito")
 st.markdown("**Análise completa de transações de cartão de crédito com Backend V2**")
-
-# Aviso sobre sincronização
-st.info("🔄 **Sincronização ativa:** Esta página reflete automaticamente todas as personalizações (categorias, descrições, exclusões) feitas na página 'Gerenciar Transações'.")
 
 # Carregar dados de cartão usando Backend V2
 @st.cache_data(ttl=600, show_spinner="Carregando transações de cartão...")

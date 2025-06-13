@@ -54,7 +54,7 @@ def decrypt_item(item: Dict[str, Any], encryption) -> None:
                     item[field] = encryption.decrypt_string(encrypted_data)
                 except Exception as e:
                     # Manter valor original em caso de erro
-                    print(f"Erro ao descriptografar {field}: {e}")
+                    pass
 
 def safe_decrypt(value: Optional[str]) -> Optional[str]:
     """
@@ -73,5 +73,4 @@ def safe_decrypt(value: Optional[str]) -> Optional[str]:
         encrypted_data = value.replace('encrypted:', '')
         return encryption.decrypt_string(encrypted_data)
     except Exception as e:
-        print(f"Erro ao descriptografar valor: {e}")
         return value

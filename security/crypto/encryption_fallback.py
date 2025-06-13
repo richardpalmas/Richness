@@ -56,12 +56,10 @@ class DataEncryption:
             
             # Combinar salt + dados criptografados
             result = salt + bytes(encrypted_bytes)
-            
-            # Codificar em base64
+              # Codificar em base64
             return base64.b64encode(result).decode('utf-8')
             
         except Exception as e:
-            print(f"Encryption error: {e}")
             return data  # Fallback: retornar dados originais
     
     def decrypt_data(self, encrypted_data: str, context: str = "general") -> str:
@@ -88,8 +86,7 @@ class DataEncryption:
             
             # Derivar chave
             derived_key = self._derive_key(self.key, salt)
-            
-            # Descriptografar usando XOR
+              # Descriptografar usando XOR
             decrypted_bytes = bytearray()
             for i, byte in enumerate(encrypted_bytes):
                 key_byte = derived_key[i % len(derived_key)]
@@ -98,7 +95,6 @@ class DataEncryption:
             return bytes(decrypted_bytes).decode('utf-8')
             
         except Exception as e:
-            print(f"Decryption error: {e}")
             return encrypted_data  # Fallback: retornar dados originais
     
     def encrypt_dict(self, data_dict: Dict[str, Any], fields_to_encrypt: Optional[list] = None) -> Dict[str, Any]:

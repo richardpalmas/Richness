@@ -372,14 +372,24 @@ if st.sidebar.button('🚪 Sair', help="Fazer logout da aplicação", type="prim
 
 # Verificar se há dados
 if df.empty:
-    st.warning("📭 Nenhuma transação encontrada para este usuário!")
-    st.info("💡 **Como adicionar dados no V2:**")
+    st.warning("📭 Nenhuma transação encontrada!")
+    st.info("💡 **Possíveis motivos:**")
     st.markdown("""
-    1. 📁 Vá para **Atualizar Dados** na barra lateral
-    2. 📤 Faça upload de arquivos OFX
-    3. 🔄 Os dados serão automaticamente organizados por usuário
-    4. 🔒 Apenas você terá acesso aos seus dados
+    1. 📁 Nenhum arquivo foi importado
+    2. �️ O período selecionado não contém transações
+    3. � Os dados não foram migrados para o Backend V2
     """)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("� Tentar Recarregar", type="primary"):
+            st.cache_data.clear()
+            st.rerun()
+    
+    with col2:
+        if st.button("📁 Ir para Atualizar Dados"):
+            st.switch_page("pages/Atualizar_Dados.py")
+    
     st.stop()
 
 # Dashboard principal
