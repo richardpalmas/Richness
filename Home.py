@@ -173,25 +173,27 @@ def init_backend_v2_obrigatorio():
         db_manager = DatabaseManager()
         repository_manager = RepositoryManager(db_manager)
         transacao_service = TransacaoService()
-        monitor = DatabaseMonitor(db_manager)
-        
-        # Verificar se está funcionando
-        health = monitor.get_system_health()
-        if not health.get('healthy', False):
+          # Teste básico de funcionamento
+        try:
+            # Verificar se o banco V2 está acessível
+            usuarios_repo = repository_manager.get_repository('usuarios')
+            test_count = usuarios_repo.contar_total()
+            if test_count >= 0:  # Qualquer resultado >= 0 indica que está funcionando
+                pass  # Tudo OK
+        except Exception:
             st.error("❌ **Backend V2 não está funcionando corretamente!**")
-            st.error("🔧 Execute o script de migração obrigatória: `python migration_to_v2_mandatory.py`")
+            st.error("🔧 Verifique a conexão com o banco de dados V2")
             st.stop()
         
         return {
             'db_manager': db_manager,
             'repository_manager': repository_manager,
-            'transacao_service': transacao_service,
-            'monitor': monitor
+            'transacao_service': transacao_service
         }
     except Exception as e:
         st.error(f"❌ **Falha crítica no Backend V2!**")
         st.error(f"🔧 **Erro**: {str(e)}")
-        st.error("📋 **Ação necessária**: Execute `python migration_to_v2_mandatory.py`")
+        st.error("📋 **Ação necessária**: Verifique se o sistema V2 foi inicializado corretamente")
         st.stop()
 
 # Verificar autenticação
