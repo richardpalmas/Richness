@@ -360,6 +360,23 @@ def converter_transacoes_manuais_para_df(transacoes_manuais):
 st.title("🏷️ Gerenciar Transações")
 st.markdown("**Corrija e personalize a categorização das suas transações**")
 
+# Sistema de escolha do tipo de transações
+st.markdown("---")
+col1, col2, col3 = st.columns([1, 2, 1])
+
+with col2:
+    tipo_gestao = st.selectbox(
+        "📋 Escolha o tipo de transações para gerenciar:",
+        options=["💳 Transações à Vista", "🎯 Transações de Crédito"],
+        index=0,
+        help="Selecione se deseja gerenciar transações à vista (conta corrente + manuais) ou transações de crédito (cartão de crédito)"
+    )
+
+st.markdown("---")
+
+# Definir se é modo crédito ou à vista
+modo_credito = tipo_gestao == "🎯 Transações de Crédito"
+
 # Carregar dados
 df = carregar_transacoes()
 
@@ -367,6 +384,18 @@ if df.empty:
     st.warning("📭 Nenhuma transação encontrada!")
     st.info("💡 Verifique se há arquivos OFX nas pastas `extratos/` e `faturas/`")
     st.stop()
+
+# Filtrar por tipo de transação baseado na escolha
+if modo_credito:
+    # Filtrar apenas transações de cartão de crédito (origem de faturas)
+    df = df[df.get("Origem", "").str.contains("Nubank_|fatura", case=False, na=False) | 
+            (df.get("Origem", "") == "Manual") & (df.get("tipo_pagamento", "") != "Espécie")]
+    st.info("🎯 **Modo Crédito ativado** - Exibindo apenas transações de cartão de crédito e transações manuais não em espécie")
+else:
+    # Filtrar transações à vista (extratos + manuais em espécie)
+    df = df[~df.get("Origem", "").str.contains("Nubank_|fatura", case=False, na=False) | 
+            (df.get("Origem", "") == "Manual") & (df.get("tipo_pagamento", "") == "Espécie")]
+    st.info("💳 **Modo À Vista ativado** - Exibindo transações de conta corrente e transações manuais em espécie")
 
 # Remover transações excluídas
 df = filtrar_transacoes_excluidas(df)
@@ -463,199 +492,329 @@ with st.expander("➕ Criar Nova Categoria"):
                         st.success(f"✅ Categoria '{categoria}' removida!")
                         st.rerun()
 
-# Seção de adicionar transação manual
-st.subheader("➕ Adicionar Transação Manual")
-with st.expander("💰 Registrar Nova Transação (Espécie/Outros)", expanded=False):
-    st.markdown("**Use esta funcionalidade para registrar transações em dinheiro, presentes recebidos, vendas, ou qualquer movimentação financeira que não aparece nos extratos bancários.**")
-    
-    with st.form("nova_transacao_manual"):
-        col1, col2 = st.columns(2)
+# Seção de adicionar transação manual (apenas para modo à vista)
+if not modo_credito:
+    st.subheader("➕ Adicionar Transação Manual")
+    with st.expander("💰 Registrar Nova Transação (Espécie/Outros)", expanded=False):
+        st.markdown("**Use esta funcionalidade para registrar transações em dinheiro, presentes recebidos, vendas, ou qualquer movimentação financeira que não aparece nos extratos bancários.**")
         
-        with col1:
-            # Data da transação
-            data_transacao = st.date_input(
-                "📅 Data da Transação",
-                value=datetime.now().date(),
-                max_value=datetime.now().date(),
-                help="Selecione a data em que a transação ocorreu"
-            )
-            
-            # Tipo de transação
-            tipo_transacao_manual = st.selectbox(
-                "📊 Tipo de Transação",
-                options=["💸 Despesa", "💰 Receita"],
-                help="Selecione se é uma entrada ou saída de dinheiro"
-            )
-            
-            # Categoria
-            categoria_manual = st.selectbox(
-                "🏷️ Categoria",
-                options=get_todas_categorias(),
-                help="Escolha a categoria que melhor descreve esta transação"
-            )
-        
-        with col2:
-            # Descrição
-            descricao_manual = st.text_input(
-                "📝 Descrição",
-                placeholder="Ex: Compra no mercado, Venda de produto, Presente recebido...",
-                max_chars=100,
-                help="Descreva a transação de forma clara e objetiva"
-            )
-            
-            # Valor
-            valor_manual = st.number_input(
-                "💵 Valor (R$)",
-                min_value=0.01,
-                value=0.01,
-                step=0.01,
-                format="%.2f",
-                help="Digite o valor da transação em reais"
-            )
-            
-            # Tipo de pagamento
-            tipo_pagamento_manual = st.selectbox(
-                "💳 Forma de Pagamento",
-                options=["Espécie", "PIX", "Transferência", "Cheque", "Outro"],
-                help="Como esta transação foi realizada?"
-            )
-        
-        # Descrição personalizada (opcional)
-        descricao_personalizada_manual = st.text_area(
-            "📋 Observações Detalhadas (Opcional)",
-            placeholder="Adicione detalhes extras, contexto, local, pessoas envolvidas, etc...",
-            max_chars=250,
-            height=80,
-            help="Campo opcional para observações mais detalhadas sobre esta transação"
-        )
-        
-        # Botão de submit
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            submit_transacao = st.form_submit_button(
-                "✅ Adicionar Transação",
-                type="primary",
-                use_container_width=True
-            )
-    
-    # Processar o envio
-    if submit_transacao:
-        # Validações
-        if not descricao_manual.strip():
-            st.error("❌ A descrição da transação é obrigatória.")
-        elif valor_manual <= 0:
-            st.error("❌ O valor deve ser maior que zero.")
-        else:
-            # Ajustar o sinal do valor baseado no tipo
-            valor_final = -abs(valor_manual) if tipo_transacao_manual == "💸 Despesa" else abs(valor_manual)
-            
-            # Adicionar a transação
-            sucesso = adicionar_transacao_manual(
-                data=data_transacao,
-                descricao=descricao_manual,
-                valor=valor_final,
-                categoria=categoria_manual,
-                descricao_personalizada=descricao_personalizada_manual,
-                tipo_pagamento=tipo_pagamento_manual
-            )
-            
-            if sucesso:
-                emoji = "💸" if valor_final < 0 else "💰"
-                st.success(f"✅ {emoji} Transação adicionada com sucesso!")
-                st.balloons()  # Efeito visual de celebração
-                
-                # Limpar cache para recarregar os dados
-                st.cache_data.clear()
-                
-                # Mostrar resumo da transação adicionada
-                with st.container():
-                    st.markdown("**📋 Resumo da transação adicionada:**")
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric("📅 Data", data_transacao.strftime("%d/%m/%Y"))
-                    
-                    with col2:
-                        st.metric("💵 Valor", f"R$ {abs(valor_final):,.2f}")
-                    
-                    with col3:
-                        st.metric("🏷️ Categoria", categoria_manual)
-                    
-                    with col4:
-                        st.metric("💳 Pagamento", tipo_pagamento_manual)
-                
-                # Sugestão para o usuário
-                st.info("💡 **Dica:** A nova transação já aparece nos filtros e pode ser editada na seção abaixo. Ela também será incluída nos gráficos da página Home.")
-            else:
-                st.error("❌ Erro ao adicionar a transação. Tente novamente.")
-
-# Seção para gerenciar transações manuais existentes
-transacoes_manuais_existentes = carregar_transacoes_manuais()
-if transacoes_manuais_existentes:
-    with st.expander(f"📊 Gerenciar Transações Manuais ({len(transacoes_manuais_existentes)})", expanded=False):
-        st.markdown("**Suas transações manuais registradas:**")
-        
-        # Organizar por data mais recente primeiro
-        transacoes_ordenadas = sorted(transacoes_manuais_existentes, key=lambda x: x["data"], reverse=True)
-        
-        for i, transacao in enumerate(transacoes_ordenadas[:10]):  # Mostrar até 10 mais recentes
-            col1, col2, col3, col4, col5, col6 = st.columns([1.5, 2.5, 1.5, 1.5, 1, 0.8])
+        with st.form("nova_transacao_manual"):
+            col1, col2 = st.columns(2)
             
             with col1:
-                data_formatada = datetime.strptime(transacao["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
-                st.text(data_formatada)
+                # Data da transação
+                data_transacao = st.date_input(
+                    "📅 Data da Transação",
+                    value=datetime.now().date(),
+                    max_value=datetime.now().date(),
+                    help="Selecione a data em que a transação ocorreu"
+                )
+                
+                # Tipo de transação
+                tipo_transacao_manual = st.selectbox(
+                    "📊 Tipo de Transação",
+                    options=["💸 Despesa", "💰 Receita"],
+                    help="Selecione se é uma entrada ou saída de dinheiro"
+                )
+                
+                # Categoria
+                categoria_manual = st.selectbox(
+                    "🏷️ Categoria",
+                    options=get_todas_categorias(),
+                    help="Escolha a categoria que melhor descreve esta transação"
+                )
             
             with col2:
-                descricao_exibida = transacao["descricao"][:35] + ("..." if len(transacao["descricao"]) > 35 else "")
-                st.text(descricao_exibida)
+                # Descrição
+                descricao_manual = st.text_input(
+                    "📝 Descrição",
+                    placeholder="Ex: Compra no mercado, Venda de produto, Presente recebido...",
+                    max_chars=100,
+                    help="Descreva a transação de forma clara e objetiva"
+                )
+                
+                # Valor
+                valor_manual = st.number_input(
+                    "💵 Valor (R$)",
+                    min_value=0.01,
+                    value=0.01,
+                    step=0.01,
+                    format="%.2f",
+                    help="Digite o valor da transação em reais"
+                )
+                
+                # Tipo de pagamento (ajustado para modo à vista)
+                tipo_pagamento_manual = st.selectbox(
+                    "💳 Forma de Pagamento",
+                    options=["Espécie", "PIX", "Transferência", "Cheque"],
+                    help="Como esta transação foi realizada?"
+                )
             
-            with col3:
-                valor = transacao["valor"]
-                valor_formatado = f"R$ {abs(valor):,.2f}"
-                emoji = "💰" if valor > 0 else "💸"
-                st.text(f"{emoji} {valor_formatado}")
-            
-            with col4:
-                st.text(transacao["categoria"])
-            
-            with col5:
-                st.text(transacao.get("tipo_pagamento", "Espécie"))
-            
-            with col6:
-                if st.button("🗑️", key=f"del_manual_{i}", help=f"Remover transação manual"):
-                    if remover_transacao_manual(transacao["id"]):
-                        st.success("✅ Transação removida!")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error("❌ Erro ao remover transação")
-        
-        if len(transacoes_manuais_existentes) > 10:
-            st.caption(f"... e mais {len(transacoes_manuais_existentes) - 10} transações manuais")
-        
-        # Estatísticas das transações manuais
-        total_receitas = sum(t["valor"] for t in transacoes_manuais_existentes if t["valor"] > 0)
-        total_despesas = sum(abs(t["valor"]) for t in transacoes_manuais_existentes if t["valor"] < 0)
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("💰 Total Receitas Manuais", f"R$ {total_receitas:,.2f}")
-        with col2:
-            st.metric("💸 Total Despesas Manuais", f"R$ {total_despesas:,.2f}")
-        with col3:
-            saldo = total_receitas - total_despesas
-            st.metric("⚖️ Saldo das Manuais", f"R$ {saldo:,.2f}")
-        
-        # Exportar transações manuais
-        st.markdown("---")
-        if st.button("📥 Exportar Transações Manuais", help="Baixar todas as transações manuais em JSON"):
-            export_data = json.dumps(transacoes_manuais_existentes, indent=2, ensure_ascii=False)
-            st.download_button(
-                "💾 Download JSON",
-                data=export_data,
-                file_name=f"transacoes_manuais_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
+            # Descrição personalizada (opcional)
+            descricao_personalizada_manual = st.text_area(
+                "📋 Observações Detalhadas (Opcional)",
+                placeholder="Adicione detalhes extras, contexto, local, pessoas envolvidas, etc...",
+                max_chars=250,
+                height=80,
+                help="Campo opcional para observações mais detalhadas sobre esta transação"
             )
+            
+            # Botão de submit
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                submit_transacao = st.form_submit_button(
+                    "✅ Adicionar Transação",
+                    type="primary",
+                    use_container_width=True
+                )
+        
+        # Processar o envio
+        if submit_transacao:
+            # Validações
+            if not descricao_manual.strip():
+                st.error("❌ A descrição da transação é obrigatória.")
+            elif valor_manual <= 0:
+                st.error("❌ O valor deve ser maior que zero.")
+            else:
+                # Ajustar o sinal do valor baseado no tipo
+                valor_final = -abs(valor_manual) if tipo_transacao_manual == "💸 Despesa" else abs(valor_manual)
+                
+                # Adicionar a transação
+                sucesso = adicionar_transacao_manual(
+                    data=data_transacao,
+                    descricao=descricao_manual,
+                    valor=valor_final,
+                    categoria=categoria_manual,
+                    descricao_personalizada=descricao_personalizada_manual,
+                    tipo_pagamento=tipo_pagamento_manual
+                )
+                
+                if sucesso:
+                    emoji = "💸" if valor_final < 0 else "💰"
+                    st.success(f"✅ {emoji} Transação adicionada com sucesso!")
+                    st.balloons()  # Efeito visual de celebração
+                    
+                    # Limpar cache para recarregar os dados
+                    st.cache_data.clear()
+                    
+                    # Mostrar resumo da transação adicionada
+                    with st.container():
+                        st.markdown("**📋 Resumo da transação adicionada:**")
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("📅 Data", data_transacao.strftime("%d/%m/%Y"))
+                        
+                        with col2:
+                            st.metric("💵 Valor", f"R$ {abs(valor_final):,.2f}")
+                        
+                        with col3:
+                            st.metric("🏷️ Categoria", categoria_manual)
+                        
+                        with col4:
+                            st.metric("💳 Pagamento", tipo_pagamento_manual)
+                    
+                    # Sugestão para o usuário
+                    st.info("💡 **Dica:** A nova transação já aparece nos filtros e pode ser editada na seção abaixo. Ela também será incluída nos gráficos da página Home.")
+                else:
+                    st.error("❌ Erro ao adicionar a transação. Tente novamente.")
+
+# Seção para gerenciar transações manuais existentes (apenas para modo à vista)
+if not modo_credito:
+    transacoes_manuais_existentes = carregar_transacoes_manuais()
+    if transacoes_manuais_existentes:
+        with st.expander(f"📊 Gerenciar Transações Manuais ({len(transacoes_manuais_existentes)})", expanded=False):
+            st.markdown("**Suas transações manuais registradas:**")
+            
+            # Organizar por data mais recente primeiro
+            transacoes_ordenadas = sorted(transacoes_manuais_existentes, key=lambda x: x["data"], reverse=True)
+            
+            for i, transacao in enumerate(transacoes_ordenadas[:10]):  # Mostrar até 10 mais recentes
+                col1, col2, col3, col4, col5, col6 = st.columns([1.5, 2.5, 1.5, 1.5, 1, 0.8])
+                
+                with col1:
+                    data_formatada = datetime.strptime(transacao["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
+                    st.text(data_formatada)
+                
+                with col2:
+                    descricao_exibida = transacao["descricao"][:35] + ("..." if len(transacao["descricao"]) > 35 else "")
+                    st.text(descricao_exibida)
+                
+                with col3:
+                    valor = transacao["valor"]
+                    valor_formatado = f"R$ {abs(valor):,.2f}"
+                    emoji = "💰" if valor > 0 else "💸"
+                    st.text(f"{emoji} {valor_formatado}")
+                
+                with col4:
+                    st.text(transacao["categoria"])
+                
+                with col5:
+                    st.text(transacao.get("tipo_pagamento", "Espécie"))
+                
+                with col6:
+                    if st.button("🗑️", key=f"del_manual_{i}", help=f"Remover transação manual"):
+                        if remover_transacao_manual(transacao["id"]):
+                            st.success("✅ Transação removida!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("❌ Erro ao remover transação")
+            
+            if len(transacoes_manuais_existentes) > 10:
+                st.caption(f"... e mais {len(transacoes_manuais_existentes) - 10} transações manuais")
+            
+            # Estatísticas das transações manuais
+            total_receitas = sum(t["valor"] for t in transacoes_manuais_existentes if t["valor"] > 0)
+            total_despesas = sum(abs(t["valor"]) for t in transacoes_manuais_existentes if t["valor"] < 0)
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("💰 Total Receitas Manuais", f"R$ {total_receitas:,.2f}")
+            with col2:
+                st.metric("💸 Total Despesas Manuais", f"R$ {total_despesas:,.2f}")
+            with col3:
+                saldo = total_receitas - total_despesas
+                st.metric("⚖️ Saldo das Manuais", f"R$ {saldo:,.2f}")
+            
+            # Exportar transações manuais
+            st.markdown("---")
+            if st.button("📥 Exportar Transações Manuais", help="Baixar todas as transações manuais em JSON"):
+                export_data = json.dumps(transacoes_manuais_existentes, indent=2, ensure_ascii=False)
+                st.download_button(
+                    "💾 Download JSON",
+                    data=export_data,
+                    file_name=f"transacoes_manuais_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+
+# Seções específicas para modo crédito
+if modo_credito:
+    st.subheader("🎯 Funcionalidades Específicas de Crédito")
+    
+    # Análise de gastos por estabelecimento
+    with st.expander("🏪 Análise por Estabelecimento", expanded=False):
+        if not df.empty:
+            # Agrupar gastos por descrição (estabelecimento)
+            gastos_estabelecimento = df[df["Valor"] < 0].groupby("Descrição")["Valor"].agg(["sum", "count"]).reset_index()
+            gastos_estabelecimento["Valor Total"] = gastos_estabelecimento["sum"].abs()
+            gastos_estabelecimento = gastos_estabelecimento.sort_values("Valor Total", ascending=False)
+            
+            if not gastos_estabelecimento.empty:
+                st.markdown("**🏆 Top 10 estabelecimentos com maiores gastos:**")
+                
+                for i, row in gastos_estabelecimento.head(10).iterrows():
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    
+                    with col1:
+                        estabelecimento = row["Descrição"][:50] + ("..." if len(row["Descrição"]) > 50 else "")
+                        st.text(estabelecimento)
+                    
+                    with col2:
+                        st.metric("💸 Total", f"R$ {row['Valor Total']:,.2f}")
+                    
+                    with col3:
+                        st.metric("📊 Transações", int(row["count"]))
+                
+                # Gráfico de gastos por estabelecimento
+                import plotly.express as px
+                top_estabelecimentos = gastos_estabelecimento.head(10)
+                
+                fig = px.bar(
+                    top_estabelecimentos,
+                    x="Valor Total",
+                    y="Descrição",
+                    orientation="h",
+                    title="💳 Top 10 Gastos por Estabelecimento",
+                    labels={"Valor Total": "Valor (R$)", "Descrição": "Estabelecimento"}
+                )
+                fig.update_layout(yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("📊 Nenhuma transação de crédito encontrada para análise.")
+    
+    # Análise de parcelamentos (simulação)
+    with st.expander("💳 Análise de Parcelamentos", expanded=False):
+        st.markdown("**📋 Identificação de possíveis parcelamentos:**")
+        st.info("💡 **Dica:** Transações com valores similares em datas próximas podem indicar parcelamentos.")
+        
+        if not df.empty:
+            # Buscar transações com valores similares
+            df_despesas = df[df["Valor"] < 0].copy()
+            df_despesas["Valor_Abs"] = df_despesas["Valor"].abs()
+            
+            # Agrupar por valor aproximado (arredondado)
+            df_despesas["Valor_Arredondado"] = df_despesas["Valor_Abs"].round(0)
+            valores_frequentes = df_despesas.groupby("Valor_Arredondado").size()
+            valores_suspeitos = valores_frequentes[valores_frequentes >= 2].index
+            
+            if len(valores_suspeitos) > 0:
+                st.markdown("**🔍 Valores que aparecem múltiplas vezes (possíveis parcelamentos):**")
+                
+                for valor in valores_suspeitos[:5]:  # Mostrar top 5
+                    transacoes_valor = df_despesas[df_despesas["Valor_Arredondado"] == valor]
+                    
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        st.metric("💰 Valor", f"R$ {valor:,.0f}")
+                        st.metric("📊 Ocorrências", len(transacoes_valor))
+                    
+                    with col2:
+                        st.markdown(f"**Transações de ~R$ {valor:,.0f}:**")
+                        for _, transacao in transacoes_valor.head(5).iterrows():
+                            data_formatada = transacao["Data"].strftime("%d/%m/%Y")
+                            descricao = transacao["Descrição"][:40] + ("..." if len(transacao["Descrição"]) > 40 else "")
+                            st.text(f"• {data_formatada} - {descricao}")
+                    
+                    st.markdown("---")
+            else:
+                st.info("✅ Nenhum padrão de parcelamento identificado.")
+    
+    # Metas de gastos por categoria (específico para crédito)
+    with st.expander("🎯 Controle de Gastos por Categoria", expanded=False):
+        st.markdown("**💡 Defina metas de gastos mensais para suas categorias mais usadas no cartão de crédito:**")
+        
+        if not df.empty:
+            # Calcular gastos por categoria no mês atual
+            from datetime import datetime, date
+            hoje = date.today()
+            inicio_mes = hoje.replace(day=1)
+            
+            df_mes_atual = df[(df["Data"] >= pd.to_datetime(inicio_mes)) & (df["Valor"] < 0)]
+            
+            if not df_mes_atual.empty:
+                gastos_categoria = df_mes_atual.groupby("Categoria")["Valor"].sum().abs().sort_values(ascending=False)
+                
+                st.markdown(f"**📊 Gastos do mês atual ({hoje.strftime('%m/%Y')}):**")
+                
+                for categoria, gasto in gastos_categoria.head(5).items():
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    
+                    with col1:
+                        st.text(f"🏷️ {categoria}")
+                    
+                    with col2:
+                        st.metric("💸 Gasto", f"R$ {gasto:,.2f}")
+                    
+                    with col3:
+                        # Campo para definir meta (simulado - poderia ser salvo em arquivo)
+                        meta = st.number_input(
+                            f"Meta para {categoria}",
+                            min_value=0.0,
+                            value=float(gasto * 1.2),  # Sugestão: 20% acima do gasto atual
+                            step=50.0,
+                            key=f"meta_{categoria}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        # Indicador de progresso
+                        if meta > 0:
+                            progresso = min(gasto / meta, 1.0)
+                            cor = "🟢" if progresso <= 0.8 else "🟡" if progresso <= 1.0 else "🔴"
+                            st.progress(progresso)
+                            st.caption(f"{cor} {progresso*100:.1f}% da meta")
+            else:
+                st.info("📊 Nenhum gasto no cartão de crédito encontrado para o mês atual.")
 
 # Seção de filtros
 st.subheader("🔍 Filtros")
@@ -675,20 +834,33 @@ with col2:
     )
 
 with col3:
-    tipo_transacao = st.selectbox(
-        "Tipo de Transação",
-        options=["Todas", "Receitas", "Despesas"],
-        help="Filtrar por tipo de transação"
-    )
+    if modo_credito:
+        tipo_transacao = st.selectbox(
+            "Tipo de Transação",
+            options=["Todas", "Compras", "Estornos"],
+            help="Filtrar por tipo de transação de crédito"
+        )
+    else:
+        tipo_transacao = st.selectbox(
+            "Tipo de Transação",
+            options=["Todas", "Receitas", "Despesas"],
+            help="Filtrar por tipo de transação"
+        )
 
 # Aplicar filtros
 df_filtrado = aplicar_filtros(df, data_inicio, data_fim, categorias_selecionadas)
 
 # Filtro adicional por tipo
-if tipo_transacao == "Receitas":
-    df_filtrado = df_filtrado[df_filtrado["Valor"] > 0]
-elif tipo_transacao == "Despesas":
-    df_filtrado = df_filtrado[df_filtrado["Valor"] < 0]
+if modo_credito:
+    if tipo_transacao == "Compras":
+        df_filtrado = df_filtrado[df_filtrado["Valor"] < 0]
+    elif tipo_transacao == "Estornos":
+        df_filtrado = df_filtrado[df_filtrado["Valor"] > 0]
+else:
+    if tipo_transacao == "Receitas":
+        df_filtrado = df_filtrado[df_filtrado["Valor"] > 0]
+    elif tipo_transacao == "Despesas":
+        df_filtrado = df_filtrado[df_filtrado["Valor"] < 0]
 
 if df_filtrado.empty:
     st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
@@ -1168,55 +1340,53 @@ with st.expander("📝 Gerenciar Descrições Personalizadas"):
 
 # Informações de ajuda
 with st.expander("ℹ️ Como usar esta página"):
-    st.markdown("""
+    st.markdown(f"""
     ### 🎯 Objetivo
-    Esta página permite corrigir e personalizar a categorização automática das suas transações.
+    Esta página permite corrigir e personalizar a categorização das suas transações.
     
-    ### 🔧 Funcionalidades
+    ### 📋 Modo Atual: {tipo_gestao}
+    
+    {f'''
+    **🎯 Modo Crédito Ativado:**
+    - Exibe apenas transações de cartão de crédito
+    - Funcionalidades específicas: análise por estabelecimento, identificação de parcelamentos
+    - Controle de metas de gastos por categoria
+    - Filtros adaptados para compras e estornos
+    ''' if modo_credito else '''
+    **💳 Modo À Vista Ativado:**
+    - Exibe transações de conta corrente e transações manuais em espécie
+    - Permite adicionar transações manuais (dinheiro, PIX, transferências)
+    - Funcionalidades completas de gerenciamento de transações manuais
+    - Filtros para receitas e despesas
+    '''}
+    
+    ### 🔧 Funcionalidades Disponíveis
     
     **🎨 Criar Categorias Personalizadas:**
     - Crie suas próprias categorias (Ex: Pets, Doações, Hobby)
     - Gerencie e remova categorias criadas
     - Use em qualquer transação após criadas
     
-    **⚡ Edição em Lote (NOVO):**
+    **⚡ Edição em Lote:**
     - Ative o "Modo Edição em Lote" para fazer múltiplas alterações
     - Faça quantas mudanças quiser sem salvar imediatamente
     - Visualize todas as mudanças pendentes antes de confirmar
     - Salve todas de uma vez ou descarte se não estiver satisfeito
     
-    **📝 Edição Individual:**
-    - Altere a categoria de cada transação usando o menu suspenso
-    - No modo individual, mudanças são salvas imediatamente
-    - Clique no botão 💾 para confirmar cada alteração
-      **🔍 Edição por Descrição Similar:**
+    **🔍 Edição por Descrição Similar:**
     - Digite parte da descrição para encontrar transações similares
     - Aplique uma nova categoria a todas elas de uma vez
     - Use categorias padrão ou suas categorias personalizadas
-      **🗑️ Exclusão de Transações:**
+    
+    **🗑️ Exclusão de Transações:**
     - Clique no botão 🗑️ para excluir uma transação temporariamente
-    - Confirme a exclusão clicando em ✅ ou cancele com ❌
     - Transações excluídas não aparecem nos gráficos e relatórios
     - Acesse "Gerenciar Transações Excluídas" para restaurar se necessário
-      **📝 Descrições Personalizadas (NOVO):**
+    
+    **📝 Descrições Personalizadas:**
     - Adicione descrições detalhadas de até 250 caracteres a qualquer transação
-    - Use o campo de texto abaixo de cada transação para escrever sua descrição
+    - Use o campo de texto abaixo de cada transação
     - Clique em 💾📝 para salvar a descrição personalizada
-    - Descrições ajudam a lembrar detalhes importantes sobre a transação
-    - Acesse "Gerenciar Descrições Personalizadas" para ver, editar ou remover todas
-    
-    **➕ Transações Manuais (NOVO):**
-    - Registre transações em dinheiro, presentes, vendas ou qualquer movimentação não bancária
-    - Preencha data, descrição, valor, categoria e forma de pagamento
-    - Adicione observações detalhadas opcionais (até 250 caracteres)
-    - Transações manuais aparecem em todos os relatórios e gráficos
-    - Gerencie suas transações manuais na seção específica
-    - Exporte todas as transações manuais em formato JSON
-    
-    **🔍 Filtros:**
-    - Use os filtros para encontrar transações específicas
-    - Filtre por data, categoria ou tipo (receita/despesa)
-    - Filtros aplicados incluem transações manuais e importadas
     
     ### 💡 Dicas para Edição em Lote
     
