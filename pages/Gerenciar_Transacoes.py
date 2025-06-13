@@ -54,6 +54,7 @@ CATEGORIAS_DISPONIVEIS = [
 
 CACHE_CATEGORIAS_FILE = "cache_categorias_usuario.json"
 CATEGORIAS_PERSONALIZADAS_FILE = "categorias_personalizadas.json"
+TRANSACOES_EXCLUIDAS_FILE = "transacoes_excluidas.json"
 
 def carregar_cache_categorias():
     """Carrega o cache de categorizações personalizadas do usuário"""
@@ -137,6 +138,74 @@ def carregar_transacoes():
         default_return=pd.DataFrame()
     )
 
+# Funções para gerenciar transações excluídas
+def carregar_transacoes_excluidas():
+    """Carrega a lista de transações excluídas pelo usuário"""
+    if os.path.exists(TRANSACOES_EXCLUIDAS_FILE):
+        try:
+            with open(TRANSACOES_EXCLUIDAS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def salvar_transacoes_excluidas(transacoes_excluidas):
+    """Salva a lista de transações excluídas"""
+    try:
+        with open(TRANSACOES_EXCLUIDAS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(transacoes_excluidas, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar transações excluídas: {e}")
+        return False
+
+def gerar_hash_transacao(row):
+    """Gera um hash único para identificar uma transação de forma consistente"""
+    import hashlib
+    # Usar data, descrição e valor para criar um identificador único
+    data_str = row["Data"].strftime("%Y-%m-%d") if hasattr(row["Data"], 'strftime') else str(row["Data"])
+    chave = f"{data_str}|{row['Descrição']}|{row['Valor']}"
+    return hashlib.md5(chave.encode()).hexdigest()
+
+def excluir_transacao(row):
+    """Exclui uma transação específica adicionando-a à lista de excluídas"""
+    transacoes_excluidas = carregar_transacoes_excluidas()
+    hash_transacao = gerar_hash_transacao(row)
+    
+    if hash_transacao not in transacoes_excluidas:
+        transacoes_excluidas.append(hash_transacao)
+        return salvar_transacoes_excluidas(transacoes_excluidas)
+    
+    return True  # Já estava excluída
+
+def restaurar_transacao(row):
+    """Remove uma transação da lista de excluídas (restaura)"""
+    transacoes_excluidas = carregar_transacoes_excluidas()
+    hash_transacao = gerar_hash_transacao(row)
+    
+    if hash_transacao in transacoes_excluidas:
+        transacoes_excluidas.remove(hash_transacao)
+        return salvar_transacoes_excluidas(transacoes_excluidas)
+    
+    return True  # Não estava excluída
+
+def filtrar_transacoes_excluidas(df):
+    """Filtra as transações excluídas do DataFrame"""
+    if df.empty:
+        return df
+    
+    transacoes_excluidas = carregar_transacoes_excluidas()
+    if not transacoes_excluidas:
+        return df
+    
+    # Aplicar filtro
+    def nao_esta_excluida(row):
+        hash_transacao = gerar_hash_transacao(row)
+        return hash_transacao not in transacoes_excluidas
+    
+    df_filtrado = df[df.apply(nao_esta_excluida, axis=1)]
+    return df_filtrado
+
 # Interface principal
 st.title("🏷️ Gerenciar Transações")
 st.markdown("**Corrija e personalize a categorização das suas transações**")
@@ -149,8 +218,11 @@ if df.empty:
     st.info("💡 Verifique se há arquivos OFX nas pastas `extratos/` e `faturas/`")
     st.stop()
 
+# Remover transações excluídas
+df = filtrar_transacoes_excluidas(df)
+
 # Métricas de resumo
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
     st.metric("📊 Total de Transações", len(df))
@@ -160,10 +232,14 @@ with col2:
     st.metric("🏷️ Categorizações Personalizadas", len(cache))
 
 with col3:
+    transacoes_excluidas = carregar_transacoes_excluidas()
+    st.metric("🗑️ Transações Excluídas", len(transacoes_excluidas))
+
+with col4:
     receitas = len(df[df["Valor"] > 0])
     st.metric("📈 Receitas", receitas)
 
-with col4:
+with col5:
     despesas = len(df[df["Valor"] < 0])
     st.metric("📉 Despesas", despesas)
 
@@ -393,16 +469,16 @@ inicio = (pagina_atual - 1) * itens_por_pagina
 fim = inicio + itens_por_pagina
 df_pagina = df_display.iloc[inicio:fim]
 
-# Exibir transações com opção de edição
+# Exibir transações com opção de edição e exclusão
 for idx, row in df_pagina.iterrows():
     with st.container():
-        col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 1])
+        col1, col2, col3, col4, col5, col6 = st.columns([1.5, 3, 1.5, 2, 0.8, 0.8])
         
         with col1:
             st.text(row["Data"].strftime("%d/%m/%Y"))
         
         with col2:
-            st.text(row["Descrição"][:50] + ("..." if len(row["Descrição"]) > 50 else ""))
+            st.text(row["Descrição"][:45] + ("..." if len(row["Descrição"]) > 45 else ""))
         
         with col3:
             valor_formatado = formatar_valor_monetario(row["Valor"])
@@ -432,7 +508,7 @@ for idx, row in df_pagina.iterrows():
                 if modo_edicao:
                     # Modo lote: adicionar à lista de mudanças pendentes
                     st.session_state.mudancas_pendentes[descricao_normalizada] = nova_categoria
-                    st.caption("� Mudança pendente")
+                    st.caption("⏳ Mudança pendente")
                 else:
                     # Modo individual: manter comportamento original
                     st.session_state.mudancas_pendentes.pop(descricao_normalizada, None)  # Remove das pendentes se existir
@@ -454,6 +530,32 @@ for idx, row in df_pagina.iterrows():
             elif modo_edicao and descricao_normalizada in st.session_state.mudancas_pendentes:
                 # Modo lote: mostrar indicador de mudança pendente
                 st.markdown("🔄")
+        
+        with col6:
+            # Botão de exclusão
+            if st.button("🗑️", key=f"delete_{idx}", help="Excluir transação"):
+                # Confirmar exclusão
+                if f"confirm_delete_{idx}" not in st.session_state:
+                    st.session_state[f"confirm_delete_{idx}"] = True
+                    st.rerun()
+            
+            # Mostrar confirmação se solicitada
+            if st.session_state.get(f"confirm_delete_{idx}", False):
+                col_sim, col_nao = st.columns(2)
+                with col_sim:
+                    if st.button("✅", key=f"confirm_yes_{idx}", help="Confirmar exclusão"):
+                        if excluir_transacao(row):
+                            st.success("🗑️ Transação excluída!")
+                            st.session_state[f"confirm_delete_{idx}"] = False
+                            st.cache_data.clear()  # Limpar cache para recarregar dados
+                            st.rerun()
+                        else:
+                            st.error("❌ Erro ao excluir transação")
+                
+                with col_nao:
+                    if st.button("❌", key=f"confirm_no_{idx}", help="Cancelar exclusão"):
+                        st.session_state[f"confirm_delete_{idx}"] = False
+                        st.rerun()
         
         st.divider()
 
@@ -534,6 +636,74 @@ with st.expander("⚙️ Opções Avançadas"):
                 mime="application/json"
             )
 
+# Seção de gerenciamento de transações excluídas
+with st.expander("🗑️ Gerenciar Transações Excluídas"):
+    transacoes_excluidas_ids = carregar_transacoes_excluidas()
+    
+    if transacoes_excluidas_ids:
+        st.markdown(f"**{len(transacoes_excluidas_ids)} transações excluídas encontradas:**")
+        
+        # Mostrar detalhes das transações excluídas
+        df_todas = carregar_transacoes()  # Carregar todas as transações (incluindo excluídas)
+        
+        transacoes_excluidas_detalhes = []
+        for hash_id in transacoes_excluidas_ids:
+            # Tentar encontrar a transação correspondente
+            for _, row in df_todas.iterrows():
+                if gerar_hash_transacao(row) == hash_id:
+                    transacoes_excluidas_detalhes.append(row)
+                    break
+        
+        if transacoes_excluidas_detalhes:
+            for i, row in enumerate(transacoes_excluidas_detalhes[:10]):  # Mostrar até 10
+                col1, col2, col3, col4 = st.columns([2, 3, 2, 1])
+                
+                with col1:
+                    st.text(row["Data"].strftime("%d/%m/%Y"))
+                
+                with col2:
+                    st.text(row["Descrição"][:40] + ("..." if len(row["Descrição"]) > 40 else ""))
+                
+                with col3:
+                    valor_formatado = formatar_valor_monetario(row["Valor"])
+                    cor = "🟢" if row["Valor"] > 0 else "🔴"
+                    st.text(f"{cor} {valor_formatado}")
+                
+                with col4:
+                    if st.button("🔄", key=f"restore_{i}", help="Restaurar transação"):
+                        if restaurar_transacao(row):
+                            st.success("✅ Transação restaurada!")
+                            st.cache_data.clear()
+                            st.rerun()
+            
+            if len(transacoes_excluidas_detalhes) > 10:
+                st.caption(f"... e mais {len(transacoes_excluidas_detalhes) - 10} transações excluídas")
+        
+        # Botão para limpar todas as exclusões
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🔄 Restaurar Todas", type="primary"):
+                if st.button("⚠️ Confirmar Restauração de Todas", type="secondary"):
+                    if salvar_transacoes_excluidas([]):
+                        st.success(f"✅ {len(transacoes_excluidas_ids)} transações restauradas!")
+                        st.cache_data.clear()
+                        st.rerun()
+        
+        with col2:
+            # Exportar lista de transações excluídas
+            export_data = json.dumps(transacoes_excluidas_ids, indent=2, ensure_ascii=False)
+            st.download_button(
+                "📥 Exportar Lista de Exclusões",
+                data=export_data,
+                file_name=f"transacoes_excluidas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
+            )
+    else:
+        st.info("✨ Nenhuma transação foi excluída ainda.")
+        st.markdown("Use o botão 🗑️ ao lado das transações para excluí-las temporariamente.")
+
 # Informações de ajuda
 with st.expander("ℹ️ Como usar esta página"):
     st.markdown("""
@@ -557,11 +727,16 @@ with st.expander("ℹ️ Como usar esta página"):
     - Altere a categoria de cada transação usando o menu suspenso
     - No modo individual, mudanças são salvas imediatamente
     - Clique no botão 💾 para confirmar cada alteração
-    
-    **🔍 Edição por Descrição Similar:**
+      **🔍 Edição por Descrição Similar:**
     - Digite parte da descrição para encontrar transações similares
     - Aplique uma nova categoria a todas elas de uma vez
     - Use categorias padrão ou suas categorias personalizadas
+    
+    **🗑️ Exclusão de Transações (NOVO):**
+    - Clique no botão 🗑️ para excluir uma transação temporariamente
+    - Confirme a exclusão clicando em ✅ ou cancele com ❌
+    - Transações excluídas não aparecem nos gráficos e relatórios
+    - Acesse "Gerenciar Transações Excluídas" para restaurar se necessário
     
     **🔍 Filtros:**
     - Use os filtros para encontrar transações específicas
@@ -581,6 +756,19 @@ with st.expander("ℹ️ Como usar esta página"):
     - Cada mudança é salva imediatamente
     - Não acumula mudanças pendentes
     
+    ### 🗑️ Dicas para Exclusão de Transações
+    
+    **Quando usar:**
+    - Transações duplicadas
+    - Transações de teste ou erro
+    - Movimentações internas que não representam gastos reais
+    - Transferências entre contas próprias
+    
+    **Segurança:**
+    - Exclusões são reversíveis - você pode restaurar a qualquer momento
+    - Use "Gerenciar Transações Excluídas" para ver e restaurar
+    - Exporte a lista de exclusões como backup
+    
     ### 🏷️ Exemplos de Categorias Personalizadas
     - **Pets**: Ração, veterinário, petshop
     - **Doações**: Instituições de caridade, causas sociais
@@ -592,4 +780,6 @@ with st.expander("ℹ️ Como usar esta página"):
     - **Mudanças pendentes** são perdidas se você sair da página sem salvar
     - **Filtros aplicados** não afetam as mudanças pendentes de outras páginas
     - **Categorias personalizadas** são aplicadas em todo o sistema automaticamente
+    - **Transações excluídas** não aparecem nos gráficos da página Home
+    - **Exclusões são temporárias** e podem ser restauradas a qualquer momento
     """)

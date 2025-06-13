@@ -251,6 +251,29 @@ def carregar_dados_home(usuario, force_refresh=False):
                 except:
                     pass  # Em caso de erro, manter categorizações originais
             
+            # Aplicar filtro de transações excluídas
+            transacoes_excluidas_file = "transacoes_excluidas.json"
+            if os.path.exists(transacoes_excluidas_file):
+                try:
+                    import json
+                    import hashlib
+                    with open(transacoes_excluidas_file, 'r', encoding='utf-8') as f:
+                        transacoes_excluidas = json.load(f)
+                    
+                    if transacoes_excluidas:
+                        def gerar_hash_transacao(row):
+                            data_str = row["Data"].strftime("%Y-%m-%d") if hasattr(row["Data"], 'strftime') else str(row["Data"])
+                            chave = f"{data_str}|{row['Descrição']}|{row['Valor']}"
+                            return hashlib.md5(chave.encode()).hexdigest()
+                        
+                        def nao_esta_excluida(row):
+                            hash_transacao = gerar_hash_transacao(row)
+                            return hash_transacao not in transacoes_excluidas
+                        
+                        df = df[df.apply(nao_esta_excluida, axis=1)]
+                except:
+                    pass  # Em caso de erro, manter todas as transações
+            
             # Calcular saldos por origem
             saldos_info = {}
             for origem in df['Origem'].unique():
