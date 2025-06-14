@@ -210,6 +210,89 @@ usuario = st.session_state.get('usuario', 'default')
 if usuario:
     boas_vindas_com_foto(usuario)
 
+# ===================== NOTIFICAÇÕES DE COMPROMISSOS =====================
+def mostrar_notificacoes(usuario, dias_alerta=7):
+    """Exibe notificações de compromissos próximos baseado na tabela de compromissos"""
+    try:
+        # Importar aqui para evitar imports circulares
+        from utils.repositories_v2 import CompromissoRepository
+        
+        # Obter user_id
+        user_data = backend_v2['usuario_repo'].obter_usuario_por_username(usuario)
+        if not user_data:
+            return
+            
+        user_id = user_data['id']
+        
+        # Buscar compromissos próximos
+        compromisso_repo = CompromissoRepository(backend_v2['db_manager'])
+        df_compromissos = compromisso_repo.obter_compromissos_proximos(user_id, dias_alerta)
+        
+        if not df_compromissos.empty:
+            # Calcular total de valor dos compromissos próximos
+            valor_total = df_compromissos['valor'].sum()
+            
+            # Notificação principal
+            st.warning(
+                f"🔔 **Notificações**: Você possui {len(df_compromissos)} compromisso(s) com vencimento nos próximos {dias_alerta} dias - Total: {formatar_valor_monetario(valor_total)}", 
+                icon="🔔"
+            )
+            
+            # Container expansível com detalhes
+            with st.expander("📋 Ver detalhes dos compromissos", expanded=False):
+                for _, row in df_compromissos.iterrows():
+                    data_vencimento = row['data_vencimento']
+                    data_fmt = data_vencimento.strftime('%d/%m/%Y')
+                    valor_fmt = formatar_valor_monetario(row['valor'])
+                    desc = row['descricao']
+                    categoria = row['categoria']
+                    
+                    # Calcular dias restantes
+                    hoje = datetime.now().date()
+                    dias_restantes = (data_vencimento.date() - hoje).days
+                    
+                    # Determinar urgência
+                    if dias_restantes < 0:
+                        urgencia = "🔴 VENCIDO"
+                        cor = "red"
+                    elif dias_restantes == 0:
+                        urgencia = "🟡 VENCE HOJE"
+                        cor = "orange"
+                    elif dias_restantes <= 3:
+                        urgencia = f"🟠 {dias_restantes} dias"
+                        cor = "orange"
+                    else:
+                        urgencia = f"🟢 {dias_restantes} dias"
+                        cor = "green"
+                    
+                    # Linha do compromisso
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    
+                    with col1:
+                        st.markdown(f"**{desc}**")
+                        st.caption(f"🏷️ {categoria}")
+                    
+                    with col2:
+                        st.markdown(f"📅 **{data_fmt}**")
+                        st.markdown(f"💰 **{valor_fmt}**")
+                    
+                    with col3:
+                        st.markdown(f"<span style='color: {cor};'><b>{urgencia}</b></span>", unsafe_allow_html=True)
+                    
+                    # Observações se existirem
+                    if row.get('observacoes') and pd.notna(row['observacoes']):
+                        st.caption(f"📝 {row['observacoes']}")
+                    
+                    st.divider()
+            
+            # Link para gerenciar compromissos
+            st.info("💡 Para gerenciar seus compromissos, acesse a página [Minhas Economias](pages/Minhas_Economias)")
+            
+    except Exception as e:
+        # Silenciosamente falhar para não quebrar o dashboard
+        st.error(f"⚠️ Erro ao carregar notificações: {str(e)}")
+        pass
+
 # Título principal
 st.title("🚀 Dashboard Financeiro")
 
@@ -251,7 +334,7 @@ st.sidebar.markdown("**Backend V2 Ativo** 🚀")
 saldos_info_inicial, df_inicial = carregar_dados_v2(usuario)
 
 # Filtros na sidebar
-st.sidebar.markdown("### � Selecionar Período")
+st.sidebar.markdown("### 📅 Selecionar Período")
 
 # Filtro de período
 data_inicio, data_fim = None, None
@@ -263,8 +346,29 @@ if not df_inicial.empty and 'data' in df_inicial.columns:
     
     st.sidebar.success(f"📅 Período: {data_inicio} a {data_fim}")
 
+# Configurações de notificação
+st.sidebar.markdown("### 🔔 Configurações de Notificação")
+dias_alerta = st.sidebar.slider(
+    "Dias de antecedência para alertas",
+    min_value=1,
+    max_value=30,
+    value=7,
+    help="Quantos dias antes do vencimento você quer ser alertado"
+)
+
+# Checkbox para ativar/desativar notificações
+notificacoes_ativas = st.sidebar.checkbox(
+    "📢 Ativar notificações de compromissos",
+    value=True,
+    help="Mostrar ou ocultar alertas de compromissos próximos"
+)
+
 # Carregar dados com filtro aplicado
 saldos_info, df = carregar_dados_v2(usuario, data_inicio, data_fim)
+
+# Chamar notificações se ativadas
+if notificacoes_ativas:
+    mostrar_notificacoes(usuario, dias_alerta)
 
 st.markdown("---")
 
@@ -554,34 +658,3 @@ if not df.empty:
     st.dataframe(df_recentes, use_container_width=True)
 else:
     st.info("Nenhuma transação para exibir")
-
-# Informações sobre o V2
-st.markdown("---")
-with st.expander("ℹ️ Sobre o Backend V2"):
-    st.markdown("""
-    ### 🚀 Características do Backend V2
-    
-    **🔒 Isolamento por Usuário**
-    - Cada usuário tem acesso apenas aos seus próprios dados
-    - Arquivos organizados em pastas específicas por usuário
-    - Nenhum vazamento de dados entre usuários
-    
-    **⚡ Performance Otimizada**
-    - Cache inteligente para consultas rápidas
-    - Queries otimizadas para grandes volumes de dados
-    - Interface responsiva e moderna
-    
-    **📊 Recursos Avançados**
-    - Análises automatizadas com IA
-    - Detecção de anomalias
-    - Relatórios personalizados
-    - Categorização inteligente
-    
-    **🛡️ Segurança Aprimorada**
-    - Dados criptografados
-    - Auditoria completa de acessos
-    - Backups automáticos
-    - Monitoramento em tempo real
-    """)
-
-st.success("✅ **Dashboard V2 carregado com sucesso!** Todos os dados são específicos do seu usuário.")
