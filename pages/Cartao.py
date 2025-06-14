@@ -8,6 +8,7 @@ import hashlib
 
 from componentes.profile_pic_component import boas_vindas_com_foto
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario
+from utils.filtros import filtro_data
 from utils.config import (
     get_cache_categorias_file,
     get_descricoes_personalizadas_file,
@@ -190,67 +191,36 @@ def carregar_dados_cartao_v2(usuario, dias_limite):
 st.sidebar.header("⚙️ Configurações do Cartão V2")
 st.sidebar.markdown("**Backend V2 Ativo** 🚀")
 
-# Carregar dados iniciais para obter range de datas
+# Carregar dados iniciais para definir range de datas
 df_cartao_completo = carregar_dados_cartao_v2(usuario, 365)  # 1 ano para ter range completo
 
-# Sistema de seleção de período mais avançado
-st.sidebar.subheader("📅 Período de Análise")
+# Filtros na sidebar
+st.sidebar.markdown("### 📅 Período de Análise")
 
-periodo_info = ""
+# Filtro de período com a mesma lógica da Home
+data_inicio, data_fim = None, None
 df_cartao = pd.DataFrame()
 
-if not df_cartao_completo.empty:
-    # Gerar lista de meses/anos disponíveis
-    df_cartao_completo['AnoMes'] = pd.to_datetime(df_cartao_completo['Data']).dt.strftime('%Y-%m')
-    meses_disponiveis = sorted(df_cartao_completo['AnoMes'].unique(), reverse=True)
+if not df_cartao_completo.empty and 'Data' in df_cartao_completo.columns:
+    # Converter coluna de data se necessário
+    df_for_filter = df_cartao_completo.copy()
+    df_for_filter['Data'] = pd.to_datetime(df_for_filter['Data'])
+    data_inicio, data_fim = filtro_data(df_for_filter, key_prefix="cartao")
     
-    if meses_disponiveis:
-        mes_ano_selecionado = st.sidebar.selectbox(
-            "Selecione o mês:",
-            meses_disponiveis,
-            index=0,
-            help="Escolha o mês/ano para análise detalhada"
-        )
-        
-        periodo_info = mes_ano_selecionado
-        
-        # Calcular data de início e fim do mês selecionado
-        ano, mes = map(int, mes_ano_selecionado.split('-'))
-        data_inicio = pd.Timestamp(year=ano, month=mes, day=1).date()
-        if mes == 12:
-            data_fim = pd.Timestamp(year=ano+1, month=1, day=1).date() - pd.Timedelta(days=1)
-        else:
-            data_fim = pd.Timestamp(year=ano, month=mes+1, day=1).date() - pd.Timedelta(days=1)
-        
-        # Usar dados do mês selecionado
-        df_cartao = df_cartao_completo[
-            (pd.to_datetime(df_cartao_completo["Data"]).dt.date >= data_inicio) & 
-            (pd.to_datetime(df_cartao_completo["Data"]).dt.date <= data_fim)
-        ]
-    else:
-        st.sidebar.warning("Nenhum mês disponível")
-        df_cartao = pd.DataFrame()
-        periodo_info = "Sem dados"
+    st.sidebar.success(f"📅 Período: {data_inicio} a {data_fim}")
+    
+    # Aplicar filtro de data aos dados do cartão
+    df_cartao = df_cartao_completo[
+        (pd.to_datetime(df_cartao_completo["Data"]).dt.date >= data_inicio) & 
+        (pd.to_datetime(df_cartao_completo["Data"]).dt.date <= data_fim)
+    ]
+    
+    periodo_info = f"{data_inicio} a {data_fim}"
 else:
-    # Fallback para seleção simples se não há dados
-    periodo_opcoes = {
-        "Últimos 30 dias": 30,
-        "Últimos 60 dias": 60,
-        "Últimos 90 dias": 90,
-        "Últimos 180 dias": 180,
-        "Último ano": 365,
-        "Todos os dados": 0
-    }
-
-    periodo_selecionado = st.sidebar.selectbox(
-        "Selecione o período:",
-        list(periodo_opcoes.keys()),
-        index=2  # Padrão: 90 dias
-    )
-
-    periodo_info = periodo_selecionado
-    dias_limite = periodo_opcoes[periodo_selecionado]
-    df_cartao = carregar_dados_cartao_v2(usuario, dias_limite)
+    # Fallback se não há dados
+    st.sidebar.warning("Nenhum dado disponível para filtro")
+    df_cartao = pd.DataFrame()
+    periodo_info = "Sem dados"
 
 # Informações do usuário
 if st.sidebar.expander("👤 Informações do Usuário"):
@@ -300,7 +270,7 @@ if df_final.empty:
     st.stop()
 
 # Dashboard principal
-st.subheader("📊 Resumo do Cartão V2")
+st.subheader("📊 Resumo do Cartão")
 
 # Métricas principais usando dados filtrados
 total_transacoes = len(df_final)

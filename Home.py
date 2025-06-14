@@ -43,7 +43,7 @@ def mostrar_formulario_login():
     with col2:
         # Cabeçalho da marca
         st.markdown("---")
-        st.markdown("# � Richness")
+        st.markdown("# 💰 Richness")
         st.markdown("### Sua plataforma de gestão financeira pessoal")
         st.markdown("**Tome controle das suas finanças de forma inteligente e segura**")
         
