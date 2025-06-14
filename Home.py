@@ -251,7 +251,7 @@ st.sidebar.markdown("**Backend V2 Ativo** 🚀")
 saldos_info_inicial, df_inicial = carregar_dados_v2(usuario)
 
 # Filtros na sidebar
-st.sidebar.markdown("### 🔍 Filtros")
+st.sidebar.markdown("### � Selecionar Período")
 
 # Filtro de período
 data_inicio, data_fim = None, None
@@ -542,69 +542,7 @@ if not df.empty and 'categoria' in df.columns:
 else:
     st.info("📊 Nenhuma transação disponível para análise por categorias.")
 
-# Análises avançadas
-st.subheader("📊 Análises Detalhadas")
 
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    # Top 10 maiores receitas
-    if not df.empty:
-        df_receitas = df[df['valor'] > 0].copy()
-        if not df_receitas.empty:
-            st.markdown("**💰 Top 10 Maiores Receitas**")
-            top_receitas = df_receitas.nlargest(10, 'valor')
-            top_receitas_display = top_receitas[['data', 'descricao', 'valor', 'categoria']].copy()
-            top_receitas_display = formatar_df_monetario(top_receitas_display, col_valor="valor")
-            st.dataframe(
-                top_receitas_display.rename(columns={
-                    'data': 'Data',
-                    'descricao': 'Descrição',
-                    'ValorFormatado': 'Valor',
-                    'categoria': 'Categoria'
-                })[['Data', 'Descrição', 'Valor', 'Categoria']],
-                use_container_width=True,
-                height=300
-            )
-
-with col2:
-    # Top 10 maiores despesas
-    if not df.empty:
-        df_despesas = df[df['valor'] < 0].copy()
-        if not df_despesas.empty:
-            st.markdown("**💸 Top 10 Maiores Despesas**")
-            top_despesas = df_despesas.nsmallest(10, 'valor')
-            top_despesas_display = top_despesas[['data', 'descricao', 'valor', 'categoria']].copy()
-            top_despesas_display['valor'] = top_despesas_display['valor'].abs()
-            top_despesas_display = formatar_df_monetario(top_despesas_display, col_valor="valor")
-            st.dataframe(
-                top_despesas_display.rename(columns={
-                    'data': 'Data',
-                    'descricao': 'Descrição',
-                    'ValorFormatado': 'Valor',
-                    'categoria': 'Categoria'
-                })[['Data', 'Descrição', 'Valor', 'Categoria']],
-                use_container_width=True,
-                height=300
-            )
-
-with col3:
-    # Análise por origem
-    if not df.empty and 'origem' in df.columns:
-        st.markdown("**🏦 Análise por Origem**")
-        origem_resumo = df.groupby('origem').agg({
-            'valor': ['count', 'sum']
-        }).round(2)
-        origem_resumo.columns = ['Transações', 'Total']
-        origem_resumo['Total_Formatado'] = origem_resumo['Total'].apply(formatar_valor_monetario)
-        
-        st.dataframe(
-            origem_resumo[['Transações', 'Total_Formatado']].rename(columns={
-                'Total_Formatado': 'Valor Total'
-            }),
-            use_container_width=True,
-            height=300
-        )
 
 st.markdown("---")
 

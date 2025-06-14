@@ -164,6 +164,39 @@ class TransacaoRepository(BaseRepository):
         results = self.db.executar_batch(queries)
         return sum(results)
 
+    def atualizar_categoria_transacao(self, user_id: int, 
+                                     hash_transacao: str, nova_categoria: str) -> bool:
+        """Atualiza categoria de uma transação específica"""
+        affected = self.db.executar_update("""
+            UPDATE transacoes 
+            SET categoria = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND hash_transacao = ?
+        """, [nova_categoria, user_id, hash_transacao])
+        return affected > 0
+
+    def excluir_transacao(self, user_id: int, hash_transacao: str) -> bool:
+        """Marca uma transação como excluída (usando tabela separada)"""
+        affected = self.db.executar_update("""
+            INSERT OR IGNORE INTO transacoes_excluidas (user_id, hash_transacao, motivo)
+            VALUES (?, ?, 'Excluída pelo usuário')
+        """, [user_id, hash_transacao])
+        return affected > 0
+
+    def excluir_transacoes_lote(self, user_id: int, hashes_transacoes: List[str]) -> int:
+        """Exclui múltiplas transações em lote"""
+        if not hashes_transacoes:
+            return 0
+            
+        queries = []
+        for hash_transacao in hashes_transacoes:
+            queries.append(("""
+                INSERT OR IGNORE INTO transacoes_excluidas (user_id, hash_transacao, motivo)
+                VALUES (?, ?, 'Excluída em lote pelo usuário')
+            """, [user_id, hash_transacao]))
+        
+        results = self.db.executar_batch(queries)
+        return sum(results)
+
 class UsuarioRepository(BaseRepository):
     """Repository para operações com usuários"""
     
@@ -433,8 +466,7 @@ class SystemLogRepository(BaseRepository):
         """Registra log do sistema"""
         self._log_operation("registrar_log", f"Tipo: {tipo}")
         return self.db.executar_insert("""
-            INSERT INTO system_logs (tipo, mensagem, dados)
-            VALUES (?, ?, ?)
+            INSERT INTO system_logs (tipo, mensagem, dados)            VALUES (?, ?, ?)
         """, [tipo, mensagem, json.dumps(dados) if dados else None])
     
     def buscar_logs(self, tipo: Optional[str] = None, limite: int = 100) -> List[Dict[str, Any]]:
@@ -451,3 +483,170 @@ class SystemLogRepository(BaseRepository):
         
         result = self.db.executar_query(query, params)
         return [dict(row) for row in result]
+
+
+class CompromissoRepository(BaseRepository):
+    """Repository para operações com compromissos (pagamentos futuros)"""
+    
+    def criar_compromisso(self, user_id: int, descricao: str, valor: float, 
+                         data_vencimento: str, categoria: str = "Compromisso", 
+                         observacoes: str = "") -> int:
+        """Cria um novo compromisso"""
+        self._log_operation("criar_compromisso", f"User: {user_id}, Desc: {descricao}")
+        
+        return self.db.executar_insert("""
+            INSERT INTO compromissos (
+                user_id, descricao, valor, data_vencimento, categoria, observacoes
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, [user_id, descricao, valor, data_vencimento, categoria, observacoes])
+    
+    def obter_compromissos(self, user_id: int, status: str = "pendente") -> pd.DataFrame:
+        """Obtém compromissos do usuário filtrados por status"""
+        query = """
+            SELECT id, descricao, valor, data_vencimento, categoria, status, observacoes, created_at
+            FROM compromissos
+            WHERE user_id = ? AND status = ?
+            ORDER BY data_vencimento ASC
+        """
+        
+        result = self.db.executar_query(query, [user_id, status])
+        
+        if result:
+            df = pd.DataFrame([dict(row) for row in result])
+            # Converter data_vencimento para datetime
+            if 'data_vencimento' in df.columns:
+                df['data_vencimento'] = pd.to_datetime(df['data_vencimento'])
+            return df
+        
+        return pd.DataFrame()
+    
+    def atualizar_status_compromisso(self, user_id: int, compromisso_id: int, 
+                                   novo_status: str) -> bool:
+        """Atualiza o status de um compromisso"""
+        self._log_operation("atualizar_status_compromisso", 
+                          f"User: {user_id}, ID: {compromisso_id}, Status: {novo_status}")
+        
+        rows_affected = self.db.executar_update("""
+            UPDATE compromissos 
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        """, [novo_status, compromisso_id, user_id])
+        
+        return rows_affected > 0
+    
+    def excluir_compromisso(self, user_id: int, compromisso_id: int) -> bool:
+        """Exclui um compromisso"""
+        self._log_operation("excluir_compromisso", f"User: {user_id}, ID: {compromisso_id}")
+        
+        rows_affected = self.db.executar_update("""
+            DELETE FROM compromissos 
+            WHERE id = ? AND user_id = ?
+        """, [compromisso_id, user_id])
+        
+        return rows_affected > 0
+    
+    def obter_compromissos_proximos(self, user_id: int, dias: int = 7) -> pd.DataFrame:
+        """Obtém compromissos que vencem nos próximos X dias"""
+        from datetime import datetime, timedelta
+        
+        data_limite = (datetime.now() + timedelta(days=dias)).strftime('%Y-%m-%d')
+        
+        query = """
+            SELECT id, descricao, valor, data_vencimento, categoria, status, observacoes
+            FROM compromissos
+            WHERE user_id = ? AND status = 'pendente' 
+              AND data_vencimento <= ?
+            ORDER BY data_vencimento ASC
+        """
+        
+        result = self.db.executar_query(query, [user_id, data_limite])
+        
+        if result:
+            df = pd.DataFrame([dict(row) for row in result])
+            if 'data_vencimento' in df.columns:
+                df['data_vencimento'] = pd.to_datetime(df['data_vencimento'])
+            return df
+        
+        return pd.DataFrame()
+
+class ConversaIARepository(BaseRepository):
+    """Repository para conversas com IA"""
+    
+    def salvar_conversa(self, user_id: int, pergunta: str, resposta: str, personalidade: str = "clara") -> int:
+        """Salva uma conversa com a IA"""
+        return self.db.executar_insert("""
+            INSERT INTO conversas_ia (user_id, pergunta, resposta, personalidade)
+            VALUES (?, ?, ?, ?)
+        """, [user_id, pergunta, resposta, personalidade])
+    
+    def obter_conversas_usuario(self, user_id: int, limite: int = 50) -> pd.DataFrame:
+        """Obtém as conversas do usuário ordenadas por data (mais recentes primeiro)"""
+        query = """
+            SELECT id, pergunta, resposta, personalidade, created_at
+            FROM conversas_ia
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        
+        result = self.db.executar_query(query, [user_id, limite])
+        
+        if result:
+            df = pd.DataFrame([dict(row) for row in result])
+            if 'created_at' in df.columns:
+                df['created_at'] = pd.to_datetime(df['created_at'])
+            return df
+        
+        return pd.DataFrame()
+    
+    def obter_conversa_por_id(self, conversa_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        """Obtém uma conversa específica por ID"""
+        query = """
+            SELECT id, pergunta, resposta, personalidade, created_at
+            FROM conversas_ia
+            WHERE id = ? AND user_id = ?
+        """
+        
+        result = self.db.executar_query(query, [conversa_id, user_id])
+        
+        if result:
+            return dict(result[0])
+        
+        return None
+    
+    def excluir_conversa(self, conversa_id: int, user_id: int) -> bool:
+        """Exclui uma conversa específica"""
+        rows_affected = self.db.executar_update("""
+            DELETE FROM conversas_ia
+            WHERE id = ? AND user_id = ?
+        """, [conversa_id, user_id])
+        
+        return rows_affected > 0
+    
+    def contar_conversas_usuario(self, user_id: int) -> int:
+        """Conta o total de conversas do usuário"""
+        query = """
+            SELECT COUNT(*) as total
+            FROM conversas_ia
+            WHERE user_id = ?
+        """
+        
+        result = self.db.executar_query(query, [user_id])
+        
+        if result:
+            return result[0]['total']
+        
+        return 0
+    
+    def limpar_conversas_antigas(self, user_id: int, dias: int = 30) -> int:
+        """Remove conversas mais antigas que X dias"""
+        from datetime import datetime, timedelta
+        
+        data_limite = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        rows_affected = self.db.executar_update("""
+            DELETE FROM conversas_ia
+            WHERE user_id = ? AND created_at < ?
+        """, [user_id, data_limite])
+        
+        return rows_affected

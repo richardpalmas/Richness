@@ -250,8 +250,7 @@ class DatabaseManager:
                     UNIQUE(user_id, hash_arquivo)
                 )
             """)
-            
-            # Tabela de logs de sistema
+              # Tabela de logs de sistema
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS system_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,6 +260,39 @@ class DatabaseManager:
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     ip_address TEXT,
                     FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE SET NULL
+                )
+            """)
+            
+            # Tabela de compromissos (pagamentos futuros)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS compromissos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    descricao TEXT NOT NULL,
+                    valor DECIMAL(15,2) NOT NULL,
+                    data_vencimento DATE NOT NULL,
+                    categoria TEXT DEFAULT 'Compromisso',
+                    status TEXT CHECK(status IN ('pendente', 'pago', 'cancelado')) DEFAULT 'pendente',
+                    observacoes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+                    CONSTRAINT valor_compromisso_not_zero CHECK (valor != 0),
+                    CONSTRAINT descricao_length CHECK (length(descricao) >= 2 AND length(descricao) <= 200)                )
+            """)
+            
+            # Tabela de conversas com IA
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversas_ia (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    pergunta TEXT NOT NULL,
+                    resposta TEXT NOT NULL,
+                    personalidade TEXT NOT NULL DEFAULT 'clara',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+                    CONSTRAINT pergunta_length CHECK (length(pergunta) >= 1 AND length(pergunta) <= 1000),
+                    CONSTRAINT resposta_length CHECK (length(resposta) >= 1)
                 )
             """)
             
@@ -291,9 +323,12 @@ class DatabaseManager:
             # Índices para cache IA
             "CREATE INDEX IF NOT EXISTS idx_cache_ia_hash ON cache_categorizacao_ia(user_id, descricao_hash)",
             "CREATE INDEX IF NOT EXISTS idx_cache_ia_aprovada ON cache_categorizacao_ia(user_id, aprovada, used_count)",
-            
-            # Índices para categorias
+              # Índices para categorias
             "CREATE INDEX IF NOT EXISTS idx_categorias_user_active ON categorias_personalizadas(user_id, is_active)",
+            
+            # Índices para conversas IA
+            "CREATE INDEX IF NOT EXISTS idx_conversas_ia_user_data ON conversas_ia(user_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_conversas_ia_personalidade ON conversas_ia(user_id, personalidade, created_at DESC)",
             
             # Índices para arquivos processados
             "CREATE INDEX IF NOT EXISTS idx_arquivos_user_tipo ON arquivos_ofx_processados(user_id, tipo, data_processamento)",
@@ -301,9 +336,12 @@ class DatabaseManager:
             # Índices para logs
             "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON system_logs(timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_logs_user_action ON system_logs(user_id, action, timestamp)",
-            
-            # Índices para manuais
+              # Índices para manuais
             "CREATE INDEX IF NOT EXISTS idx_manuais_user_data ON transacoes_manuais(user_id, data DESC)",
+            
+            # Índices para compromissos
+            "CREATE INDEX IF NOT EXISTS idx_compromissos_user_data ON compromissos(user_id, data_vencimento DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_compromissos_status ON compromissos(user_id, status, data_vencimento)",
         ]
         
         for indice in indices:

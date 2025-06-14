@@ -58,6 +58,132 @@ def init_backend_v2_gerenciar():
 
 backend_v2 = init_backend_v2_gerenciar()
 
+# Funções auxiliares para manipulação do banco de dados
+def atualizar_categoria_no_banco(usuario, descricao, nova_categoria):
+    """Atualiza categoria de uma transação no banco de dados"""
+    try:
+        user_data = backend_v2['usuario_repo'].obter_usuario_por_username(usuario)
+        if not user_data:
+            return False
+            
+        transacao_repo = backend_v2['transacao_repo']
+        
+        # Buscar a transação pela descrição para obter dados completos
+        df_user = backend_v2['transacao_service'].listar_transacoes_usuario(usuario, limite=10000)
+        transacao_match = df_user[df_user['descricao'] == descricao]
+        
+        if transacao_match.empty:
+            st.error(f"Transação não encontrada: {descricao[:50]}...")
+            return False
+        
+        # Usar os dados da primeira transação encontrada
+        row = transacao_match.iloc[0]
+        data_str = str(row['data'])[:10] if isinstance(row['data'], str) else row['data'].strftime('%Y-%m-%d')
+        hash_transacao = transacao_repo.gerar_hash_transacao(data_str, row['descricao'], float(row['valor']))
+        
+        return transacao_repo.atualizar_categoria_transacao(
+            user_data['id'], hash_transacao, nova_categoria
+        )
+    except Exception as e:
+        st.error(f"Erro ao atualizar categoria no banco: {e}")
+        return False
+
+def atualizar_categorias_lote_no_banco(usuario, mapeamento_descricoes):
+    """Atualiza categorias em lote no banco de dados"""
+    try:
+        user_data = backend_v2['usuario_repo'].obter_usuario_por_username(usuario)
+        if not user_data:
+            return 0
+            
+        transacao_repo = backend_v2['transacao_repo']
+        
+        # Buscar todas as transações do usuário para obter dados completos
+        df_user = backend_v2['transacao_service'].listar_transacoes_usuario(usuario, limite=10000)
+        
+        # Converter descrições para hashes usando dados reais
+        mapeamento_hashes = {}
+        transacoes_encontradas = 0
+        
+        for descricao_normalizada, categoria in mapeamento_descricoes.items():
+            # Buscar transações que contenham a descrição (busca mais flexível)
+            # Primeiro tenta match exato
+            mask = df_user['descricao'].str.lower().str.strip() == descricao_normalizada
+            transacoes_match = df_user[mask]
+            
+            # Se não encontrou com match exato, tenta busca por substring
+            if transacoes_match.empty:
+                # Remove caracteres especiais e tenta match parcial
+                descricao_limpa = descricao_normalizada.replace('-', ' ').replace('*', ' ').strip()
+                palavras_chave = [p.strip() for p in descricao_limpa.split() if len(p.strip()) > 2]
+                
+                if palavras_chave:
+                    # Busca por qualquer palavra-chave na descrição
+                    pattern = '|'.join(palavras_chave)
+                    mask = df_user['descricao'].str.lower().str.contains(pattern, case=False, na=False)
+                    transacoes_match = df_user[mask]
+            
+            # Processar transações encontradas
+            for _, row in transacoes_match.iterrows():
+                try:
+                    data_str = str(row['data'])[:10] if isinstance(row['data'], str) else row['data'].strftime('%Y-%m-%d')
+                    hash_transacao = transacao_repo.gerar_hash_transacao(data_str, row['descricao'], float(row['valor']))
+                    mapeamento_hashes[hash_transacao] = categoria
+                    transacoes_encontradas += 1
+                except Exception as ex:
+                    st.warning(f"Erro ao processar transação {row.get('descricao', 'N/A')}: {ex}")
+                    continue
+        
+        if not mapeamento_hashes:
+            st.warning(f"Nenhuma transação foi encontrada no banco para as {len(mapeamento_descricoes)} descrições fornecidas")
+            # Debug: mostrar as descrições que não foram encontradas
+            st.info(f"Descrições buscadas: {', '.join(list(mapeamento_descricoes.keys())[:3])}...")
+            return 0
+        
+        resultado = transacao_repo.atualizar_categorias_lote(
+            user_data['id'], mapeamento_hashes
+        )
+        
+        if resultado > 0:
+            st.info(f"✅ {resultado} transações categorizadas no banco de dados ({transacoes_encontradas} encontradas)")
+        
+        return resultado
+        
+    except Exception as e:
+        st.error(f"Erro ao atualizar categorias em lote no banco: {e}")
+        return 0
+
+def excluir_transacao_no_banco(usuario, row):
+    """Exclui uma transação no banco de dados"""
+    try:
+        user_data = backend_v2['usuario_repo'].obter_usuario_por_username(usuario)
+        if not user_data:
+            return False
+            
+        transacao_repo = backend_v2['transacao_repo']
+        hash_transacao = gerar_hash_transacao(row)
+        
+        return transacao_repo.excluir_transacao(user_data['id'], hash_transacao)
+    except Exception as e:
+        st.error(f"Erro ao excluir transação no banco: {e}")
+        return False
+
+def excluir_transacoes_lote_no_banco(usuario, rows):
+    """Exclui múltiplas transações no banco de dados"""
+    try:
+        user_data = backend_v2['usuario_repo'].obter_usuario_por_username(usuario)
+        if not user_data:
+            return 0
+            
+        transacao_repo = backend_v2['transacao_repo']
+        hashes = [gerar_hash_transacao(row) for row in rows]
+        
+        return transacao_repo.excluir_transacoes_lote(user_data['id'], hashes)
+    except Exception as e:
+        st.error(f"Erro ao excluir transações em lote no banco: {e}")
+        return 0
+
+# Funções auxiliares para manipulação do banco de dados
+
 # Constantes
 CATEGORIAS_DISPONIVEIS = [
     "Alimentação",
@@ -110,8 +236,9 @@ def gerar_hash_transacao(row):
 
 # Função principal para carregar transações usando Backend V2
 @st.cache_data(ttl=300, show_spinner="Carregando transações...")
-def carregar_transacoes_v2(usuario, periodo_dias=365):
-    """Carrega todas as transações usando Backend V2 com personalizações"""
+def carregar_transacoes_v2(usuario, periodo_dias=365, cache_version=None):
+    """Carrega todas as transações usando Backend V2 com personalizações
+    cache_version: parâmetro usado para forçar refresh quando cache de categorias muda"""
     try:
         transacao_service = backend_v2['transacao_service']
         
@@ -141,15 +268,20 @@ def carregar_transacoes_v2(usuario, periodo_dias=365):
             if periodo_dias > 0:
                 data_limite = datetime.now() - timedelta(days=periodo_dias)
                 df_transacoes = df_transacoes[df_transacoes["Data"] >= data_limite]
-            
-            # Aplicar categorizações personalizadas do usuário (compatibilidade com arquivos JSON)
+              # Aplicar categorizações do cache apenas para transações sem categoria definida no banco
             cache = carregar_cache_categorias()
             if cache:
                 def aplicar_categoria_personalizada(row):
+                    # Usar categoria do banco se existir e não for "Outros" ou vazia
+                    categoria_banco = row.get("Categoria", "")
+                    if categoria_banco and categoria_banco != "Outros" and categoria_banco.strip():
+                        return categoria_banco
+                    
+                    # Caso contrário, verificar cache local como fallback
                     descricao_normalizada = row["Descrição"].lower().strip()
                     if descricao_normalizada in cache:
                         return cache[descricao_normalizada]
-                    return row.get("Categoria", "Outros")
+                    return "Outros"
                 
                 df_transacoes["Categoria"] = df_transacoes.apply(aplicar_categoria_personalizada, axis=1)
             
@@ -232,7 +364,7 @@ def carregar_transacoes():
     """Carrega todas as transações disponíveis - MIGRADO PARA BACKEND V2"""
     # Redirecionar para nova função Backend V2
     usuario_atual = get_current_user()
-    return carregar_transacoes_v2(usuario_atual, periodo_dias=730)  # 2 anos de dados
+    return carregar_transacoes_v2(usuario_atual, periodo_dias=730, cache_version=get_cache_categorias_version())
 
 # Funções para gerenciar transações excluídas
 def carregar_transacoes_excluidas():
@@ -258,13 +390,19 @@ def salvar_transacoes_excluidas(transacoes_excluidas):
         return False
 
 def excluir_transacao(row):
-    """Exclui uma transação específica adicionando-a à lista de excluídas"""
+    """Exclui uma transação específica adicionando-a à lista de excluídas e persistindo no banco"""
+    # Persistir no banco primeiro
+    usuario = get_current_user()
+    success_bd = excluir_transacao_no_banco(usuario, row)
+    
+    # Também manter no arquivo local para compatibilidade
     transacoes_excluidas = carregar_transacoes_excluidas()
     hash_transacao = gerar_hash_transacao(row)
     
     if hash_transacao not in transacoes_excluidas:
         transacoes_excluidas.append(hash_transacao)
-        return salvar_transacoes_excluidas(transacoes_excluidas)
+        arquivo_salvo = salvar_transacoes_excluidas(transacoes_excluidas)
+        return success_bd or arquivo_salvo
     
     return True  # Já estava excluída
 
@@ -586,10 +724,19 @@ tipo_gestao = "💳 Crédito" if modo_credito else "💰 À Vista"
 # Obter o usuário atual
 usuario = st.session_state['usuario']
 
+# Função para versionar o cache de categorias
+def get_cache_categorias_version():
+    """Retorna uma versão baseada no timestamp do arquivo de cache de categorias"""
+    cache_file = get_cache_categorias_file()
+    if os.path.exists(cache_file):
+        return os.path.getmtime(cache_file)
+    return 0
+
 # Carregar dados com Backend V2
-@st.cache_data(ttl=300)  # Cache por 5 minutos
-def carregar_dados_v2(modo_credito: bool = False):
-    """Carrega dados das transações usando Backend V2"""
+@st.cache_data(ttl=300, show_spinner="Carregando transações atualizadas...")
+def carregar_dados_v2(modo_credito: bool = False, cache_version=None):
+    """Carrega dados das transações usando Backend V2
+    cache_version: parâmetro usado para forçar refresh quando categorias são atualizadas"""
     try:
         # Obter instância dos repositories
         user_data = backend_v2['usuario_repo'].obter_usuario_por_username(usuario)
@@ -631,7 +778,7 @@ def carregar_dados_v2(modo_credito: bool = False):
         return pd.DataFrame()
 
 # Carregar dados
-df = carregar_dados_v2(modo_credito)
+df = carregar_dados_v2(modo_credito, cache_version=get_cache_categorias_version())
 
 # Filtrar por tipo (vista/crédito)
 if not df.empty:
@@ -784,11 +931,12 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
                         st.session_state.sugestoes_ia = sugestoes
                         st.success(f"✅ IA gerou {len(sugestoes)} sugestões de categorização!")
                         df_categorizado = aplicar_categorizacao_llm(df_para_categorizar, sugestoes)
-                    else:
-                        st.error("❌ IA não conseguiu gerar sugestões. Tente novamente.")
+                    else:                        st.error("❌ IA não conseguiu gerar sugestões. Tente novamente.")
                 except Exception as e:
                     st.error(f"❌ Erro na categorização por IA: {str(e)}")
-                    st.error("💡 Verifique se a configuração da IA está correta.")    # Exibir prévia das sugestões fora das colunas laterais
+                    st.error("💡 Verifique se a configuração da IA está correta.")
+    
+    # Exibir prévia das sugestões fora das colunas laterais
     # Usar sugestões do session_state se disponíveis, senão usar a variável local
     if 'sugestoes_ia' in st.session_state:
         sugestoes_para_exibir = st.session_state.sugestoes_ia
@@ -797,6 +945,15 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
     
     if sugestoes_para_exibir and isinstance(sugestoes_para_exibir, list) and len(sugestoes_para_exibir) > 0:
         st.markdown("**📋 Prévia das sugestões da IA:**")
+        
+        # Ajuda sobre correção manual em uma caixa de informação
+        st.info("""
+💡 **Como usar a correção manual:**
+- Use o **selectbox de categoria** para corrigir sugestões incorretas da IA
+- Sugestões corrigidas são marcadas com 🔧 **CORRIGIDA**  
+- As correções são aplicadas automaticamente quando você aceita a sugestão
+- Para voltar à categoria original, simplesmente selecione-a novamente no selectbox
+        """)
         
         # Inicializar estado da sessão para sugestões aceitas/rejeitadas
         if 'sugestoes_aceitas' not in st.session_state:
@@ -836,14 +993,13 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
             descricao = sugestao.get('descricao', 'N/A')
             categoria_sugerida = sugestao.get('categoria_sugerida', sugestao.get('categoria', 'N/A'))
             confianca = sugestao.get('confianca', 0)
-            
-            # Cor baseada na confiança
+              # Cor baseada na confiança
             if confianca > 0.8:
                 cor_emoji = "🟢"
             elif confianca > 0.6:
                 cor_emoji = "🟡"
             else:
-                cor_emoji = "�"
+                cor_emoji = "🔴"
             
             # Status da sugestão
             status = ""
@@ -852,11 +1008,37 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
             elif idx_global in st.session_state.sugestoes_rejeitadas:
                 status = " ❌ **REJEITADA**"
             
-            # Exibir sugestão com botões individuais
-            col_info, col_aceitar, col_rejeitar = st.columns([3, 1, 1])
+            # Inicializar correções manuais se não existir
+            if 'correcoes_manuais' not in st.session_state:
+                st.session_state.correcoes_manuais = {}
+            
+            # Verificar se há correção manual para esta sugestão
+            categoria_final = st.session_state.correcoes_manuais.get(idx_global, categoria_sugerida)
+            icone_corrigido = " 🔧 **CORRIGIDA**" if idx_global in st.session_state.correcoes_manuais else ""
+            
+            # Exibir sugestão com layout expandido
+            col_info, col_categoria, col_aceitar, col_rejeitar = st.columns([2.5, 1.5, 0.7, 0.7])
             
             with col_info:
-                st.markdown(f"**📝 {descricao}** → **🏷️ {categoria_sugerida}** {cor_emoji} *{confianca:.0%}*{status}")
+                st.markdown(f"**📝 {descricao}**")
+                st.caption(f"Confiança: {cor_emoji} *{confianca:.0%}*{status}{icone_corrigido}")
+            
+            with col_categoria:
+                # Selectbox para correção manual da categoria
+                categoria_corrigida = st.selectbox(
+                    "🏷️ Categoria",
+                    options=get_todas_categorias(),
+                    index=get_todas_categorias().index(categoria_final) if categoria_final in get_todas_categorias() else 0,
+                    key=f"categoria_correcao_{idx_global}",
+                    help="Corrija a categoria se a IA sugeriu incorretamente"
+                )
+                
+                # Se a categoria foi alterada, salvar a correção
+                if categoria_corrigida != categoria_sugerida:
+                    st.session_state.correcoes_manuais[idx_global] = categoria_corrigida
+                elif idx_global in st.session_state.correcoes_manuais and categoria_corrigida == categoria_sugerida:
+                    # Se voltou para a original, remover da lista de correções
+                    del st.session_state.correcoes_manuais[idx_global]
             
             with col_aceitar:
                 if st.button("✅", key=f"aceitar_{idx_global}", 
@@ -875,20 +1057,26 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
                     st.rerun()
             
             st.markdown("---")
-        
-        # Resumo das ações
+          # Resumo das ações
         total_aceitas = len(st.session_state.sugestoes_aceitas)
         total_rejeitadas = len(st.session_state.sugestoes_rejeitadas)
+        total_corrigidas = len(st.session_state.get('correcoes_manuais', {}))
         
-        if total_aceitas > 0 or total_rejeitadas > 0:
-            st.info(f"📊 Resumo: {total_aceitas} aceitas, {total_rejeitadas} rejeitadas de {len(sugestoes_para_exibir)} sugestões")
-        
-        # Botões para aplicar ou descartar
+        if total_aceitas > 0 or total_rejeitadas > 0 or total_corrigidas > 0:
+            info_text = f"📊 Resumo: {total_aceitas} aceitas, {total_rejeitadas} rejeitadas"
+            if total_corrigidas > 0:
+                info_text += f", {total_corrigidas} corrigidas manualmente"
+            info_text += f" de {len(sugestoes_para_exibir)} sugestões"
+            st.info(info_text)
+          # Botões para aplicar ou descartar
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("✅ Aplicar Aceitas", type="primary", use_container_width=True,
                         disabled=len(st.session_state.sugestoes_aceitas) == 0):
                 aplicacoes_sucesso = 0
+                mapeamento_descricoes = {}
+                
+                # Coletar todas as sugestões aceitas
                 for idx in st.session_state.sugestoes_aceitas:
                     if idx < len(sugestoes_para_exibir):
                         sugestao = sugestoes_para_exibir[idx]
@@ -899,25 +1087,66 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
                                 na=False
                             )
                             if mask.any():
-                                cache = carregar_cache_categorias()
-                                categoria_para_aplicar = sugestao.get("categoria_sugerida", sugestao.get("categoria", "Outros"))
-                                cache[sugestao["descricao"].lower()] = categoria_para_aplicar
-                                salvar_cache_categorias(cache)
+                                # Usar categoria corrigida manualmente ou a sugerida pela IA
+                                if idx in st.session_state.get('correcoes_manuais', {}):
+                                    categoria_para_aplicar = st.session_state.correcoes_manuais[idx]
+                                else:
+                                    categoria_para_aplicar = sugestao.get("categoria_sugerida", sugestao.get("categoria", "Outros"))
+                                
+                                descricao_normalizada = sugestao["descricao"].lower().strip()
+                                mapeamento_descricoes[descricao_normalizada] = categoria_para_aplicar
                                 aplicacoes_sucesso += 1
                         except Exception as e:
                             st.error(f"Erro ao aplicar sugestão: {e}")
                             continue
                 
                 if aplicacoes_sucesso > 0:
-                    st.success(f"✅ {aplicacoes_sucesso} categorizações aplicadas com sucesso!")
-                    # Limpar estados e prévia de sugestões
-                    if 'sugestoes_ia' in st.session_state:
-                        del st.session_state.sugestoes_ia
-                    st.session_state.sugestoes_aceitas = set()
-                    st.session_state.sugestoes_rejeitadas = set()
-                    st.session_state.pagina_atual = 0
-                    # Recarregar a página automaticamente
-                    st.rerun()
+                    # Persistir APENAS no banco de dados (Backend V2) - removendo dependência do cache local
+                    categorias_atualizadas_bd = atualizar_categorias_lote_no_banco(usuario, mapeamento_descricoes)
+                    
+                    if categorias_atualizadas_bd > 0:
+                        msg = f"✅ {aplicacoes_sucesso} categorizações aplicadas com sucesso!"
+                        msg += f" ({categorias_atualizadas_bd} persistidas no banco de dados)"
+                        st.success(msg)
+                        
+                        # Limpar estados e prévia de sugestões
+                        if 'sugestoes_ia' in st.session_state:
+                            del st.session_state.sugestoes_ia
+                        st.session_state.sugestoes_aceitas = set()
+                        st.session_state.sugestoes_rejeitadas = set()
+                        st.session_state.correcoes_manuais = {}
+                        st.session_state.pagina_atual = 0
+                        
+                        # Limpar caches para forçar reload dos dados atualizados
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                        
+                        # Pequeno atraso para garantir que a transação foi commitada
+                        time.sleep(0.5)
+                        
+                        # Recarregar a página
+                        st.rerun()
+                    else:
+                        st.error("❌ Erro ao persistir categorizações no banco de dados!")
+                        
+                        # Fallback: tentar salvar no cache local apenas se o banco falhou
+                        cache = carregar_cache_categorias()
+                        cache.update(mapeamento_descricoes)
+                        cache_salvo = salvar_cache_categorias(cache)
+                        
+                        if cache_salvo:
+                            st.warning(f"⚠️ {aplicacoes_sucesso} categorizações salvas apenas no cache local")
+                            # Limpar estados
+                            if 'sugestoes_ia' in st.session_state:
+                                del st.session_state.sugestoes_ia
+                            st.session_state.sugestoes_aceitas = set()
+                            st.session_state.sugestoes_rejeitadas = set()
+                            st.session_state.correcoes_manuais = {}
+                            st.session_state.pagina_atual = 0
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("❌ Falha completa ao salvar categorizações!")
                 else:
                     st.error("❌ Nenhuma categorização foi aplicada.")
         
@@ -931,11 +1160,8 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
             if st.button("❌ Limpar Seleções", use_container_width=True):
                 st.session_state.sugestoes_aceitas = set()
                 st.session_state.sugestoes_rejeitadas = set()
-                st.rerun()
-                st.info("🗑️ Sugestões descartadas.")
-                st.rerun()
-
-    # Estatísticas de categorização
+                st.session_state.correcoes_manuais = {}
+                st.rerun()    # Estatísticas de categorização
     st.markdown("---")
     st.markdown("**📊 Estatísticas de Categorização:**")
     
@@ -1329,123 +1555,123 @@ with col4:
 st.subheader("⚡ Edição em Lote")
 modo_edicao_lote = st.toggle(
     "🔄 Ativar Modo Edição em Lote",
-    help="Ative para fazer múltiplas edições antes de salvar"
+    help="Selecione transações e aplique categorias rapidamente"
 )
 
 if modo_edicao_lote:
-    if 'mudancas_pendentes' not in st.session_state:
-        st.session_state.mudancas_pendentes = {}
     if 'transacoes_selecionadas' not in st.session_state:
-        st.session_state.transacoes_selecionadas = set()
-    
-    # Ferramentas de seleção rápida
-    st.markdown("**🎯 Seleção Rápida:**")
-    col1, col2, col3, col4 = st.columns(4)
+        st.session_state.transacoes_selecionadas = set()    # Interface minimalista - busca, categoria e ações
+    col1, col2, col3 = st.columns([3, 2, 2])
     
     with col1:
-        if st.button("✅ Selecionar Todas", use_container_width=True):
-            st.session_state.transacoes_selecionadas = set(range(len(df_filtrado)))
-            st.rerun()
+        # Busca rápida por padrão
+        padrao = st.text_input(
+            "🔍 Buscar por padrão",
+            placeholder="Digite algo para selecionar automaticamente (Ex: PIX, UBER, IFOOD...)",
+            help="Seleciona automaticamente transações que contenham este texto",
+            key="busca_lote"
+        )
+        if padrao:
+            # Seleção automática ao digitar
+            indices = []
+            for i, row in df_filtrado.iterrows():
+                if padrao.lower() in row['Descrição'].lower():
+                    indices.append(df_filtrado.index.get_loc(i))
+            st.session_state.transacoes_selecionadas = set(indices)
     
     with col2:
-        if st.button("❌ Limpar Seleção", use_container_width=True):
-            st.session_state.transacoes_selecionadas = set()
-            st.rerun()
-    
-    with col3:
-        categoria_filtro = st.selectbox(
-            "🏷️ Selecionar por Categoria",
-            [""] + get_todas_categorias(),
-            key="filtro_categoria_selecao"
-        )
-        if categoria_filtro and st.button("🎯 Selecionar", key="sel_cat"):
-            indices = df_filtrado[df_filtrado['Categoria'] == categoria_filtro].index
-            st.session_state.transacoes_selecionadas.update(indices)
-            st.rerun()
-    
-    with col4:
-        valor_min_filtro = st.number_input(
-            "💰 Selecionar por Valor (mín)",
-            min_value=0.0,
-            value=0.0,
-            key="valor_min_selecao"
-        )
-        if valor_min_filtro > 0 and st.button("💰 Selecionar", key="sel_val"):
-            indices = df_filtrado[abs(df_filtrado['Valor']) >= valor_min_filtro].index
-            st.session_state.transacoes_selecionadas.update(indices)
-            st.rerun()
-    
-    # Ações em lote
-    st.markdown("**⚡ Ações em Lote:**")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
+        # Categoria para aplicar
         categoria_lote = st.selectbox(
-            "🏷️ Categoria para Aplicar",
+            "🏷️ Categoria",
             get_todas_categorias(),
-            key="categoria_lote"
+            key="cat_lote",
+            help="Categoria para aplicar às transações selecionadas"
         )
-        
-        if st.button("� Aplicar Categoria às Selecionadas", type="primary", 
-                    disabled=len(st.session_state.transacoes_selecionadas) == 0):
-            cache = carregar_cache_categorias()
-            aplicadas = 0
-            
-            for idx in st.session_state.transacoes_selecionadas:
-                if idx < len(df_filtrado):
-                    row = df_filtrado.iloc[idx]
-                    descricao_normalizada = row['Descrição'].lower().strip()
-                    cache[descricao_normalizada] = categoria_lote
-                    aplicadas += 1
-            
-            if salvar_cache_categorias(cache):
-                st.success(f"✅ Categoria '{categoria_lote}' aplicada a {aplicadas} transações!")
-                st.session_state.transacoes_selecionadas = set()
-                st.cache_data.clear()
-                st.rerun()
-    
-    with col2:
-        st.info(f"📝 {len(st.session_state.mudancas_pendentes)} mudanças pendentes")
-        st.info(f"✅ {len(st.session_state.transacoes_selecionadas)} selecionadas")
-        
-        if st.button("💾 Salvar Mudanças Pendentes", type="primary", 
-                    disabled=len(st.session_state.mudancas_pendentes) == 0):
-            cache = carregar_cache_categorias()
-            
-            for descricao, nova_categoria in st.session_state.mudancas_pendentes.items():
-                cache[descricao] = nova_categoria
-            
-            if salvar_cache_categorias(cache):
-                st.success(f"✅ {len(st.session_state.mudancas_pendentes)} mudanças salvas com sucesso!")
-                st.session_state.mudancas_pendentes = {}
-                st.cache_data.clear()
-                st.rerun()
     
     with col3:
-        if st.button("🗑️ Descartar Mudanças", 
-                    disabled=len(st.session_state.mudancas_pendentes) == 0):
-            st.session_state.mudancas_pendentes = {}
-            st.success("✅ Mudanças descartadas!")
-            st.rerun()
+        # Botões de ação lado a lado
+        num_selecionadas = len(st.session_state.transacoes_selecionadas)
+        col_cat, col_del = st.columns(2)
         
-        if st.button("❌ Limpar Tudo"):
-            st.session_state.mudancas_pendentes = {}
-            st.session_state.transacoes_selecionadas = set()
-            st.success("✅ Tudo limpo!")
-            st.rerun()
-    
-    # Mostrar mudanças pendentes de forma mais organizada
-    if st.session_state.mudancas_pendentes:
-        with st.expander("📋 Ver Mudanças Pendentes", expanded=False):
-            for descricao, categoria in st.session_state.mudancas_pendentes.items():
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.text(f"• {descricao[:60]}{'...' if len(descricao) > 60 else ''} → {categoria}")
-                with col2:
-                    if st.button("🗑️", key=f"remove_{hash(descricao)}", help="Remover esta mudança"):
-                        del st.session_state.mudancas_pendentes[descricao]
+        with col_cat:
+            if st.button(
+                f"✅ Categorizar ({num_selecionadas})",
+                type="primary",
+                disabled=num_selecionadas == 0,
+                use_container_width=True,
+                help=f"Aplicar categoria '{categoria_lote}' a {num_selecionadas} transações"
+            ):
+                # Preparar mapeamento para persistir no banco
+                mapeamento_descricoes = {}
+                aplicadas = 0
+                
+                for idx in st.session_state.transacoes_selecionadas:
+                    if idx < len(df_filtrado):
+                        row = df_filtrado.iloc[idx]
+                        descricao_normalizada = row['Descrição'].lower().strip()
+                        mapeamento_descricoes[descricao_normalizada] = categoria_lote
+                        aplicadas += 1
+                
+                if aplicadas > 0:
+                    # Persistir no banco de dados (Backend V2)
+                    categorias_atualizadas_bd = atualizar_categorias_lote_no_banco(usuario, mapeamento_descricoes)
+                    
+                    # Também manter no cache para compatibilidade (mas não sobrescrever banco)
+                    cache = carregar_cache_categorias()
+                    cache.update(mapeamento_descricoes)
+                    cache_salvo = salvar_cache_categorias(cache)
+                    
+                    if categorias_atualizadas_bd > 0:
+                        msg = f"✅ {aplicadas} transações categorizadas como '{categoria_lote}'!"
+                        msg += f" ({categorias_atualizadas_bd} persistidas no banco de dados)"
+                        st.success(msg)
+                          # Limpar seleção e forçar recarregamento completo
+                        st.session_state.transacoes_selecionadas = set()
+                        # Limpar TODOS os caches para forçar reload dos dados do banco
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                        # Recarregar página
                         st.rerun()
-
+                    elif cache_salvo:
+                        st.warning(f"⚠️ {aplicadas} transações categorizadas apenas no cache local (não persistidas no banco)")
+                        st.session_state.transacoes_selecionadas = set()
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error("❌ Erro ao salvar categorizações!")
+                        st.session_state.transacoes_selecionadas = set()
+                else:
+                    st.error("❌ Nenhuma transação foi processada!")
+                    st.session_state.transacoes_selecionadas = set()
+                    st.cache_data.clear()
+                    st.rerun()
+        
+        with col_del:
+            if st.button(
+                f"🗑️ Excluir ({num_selecionadas})",
+                disabled=num_selecionadas == 0,
+                use_container_width=True,
+                help=f"Excluir {num_selecionadas} transações selecionadas"
+            ):
+                excluidas = 0
+                
+                for idx in st.session_state.transacoes_selecionadas:
+                    if idx < len(df_filtrado):
+                        row = df_filtrado.iloc[idx]
+                        if excluir_transacao(row):
+                            excluidas += 1
+                
+                if excluidas > 0:
+                    st.success(f"🗑️ {excluidas} transações excluídas!")
+                    # Limpar seleção e recarregar página
+                    st.session_state.transacoes_selecionadas = set()
+                    st.cache_data.clear()
+                    st.rerun()
+    
+    # Mostrar contador (apenas como informação)
+    if st.session_state.transacoes_selecionadas:
+        st.caption(f"📋 {len(st.session_state.transacoes_selecionadas)} transações selecionadas")
+        
 # Lista de transações
 st.subheader("📋 Transações")
 
@@ -1486,14 +1712,14 @@ else:
             with col_select:
                 if st.checkbox("", value=is_selected, key=f"select_{global_idx}_{inicio_idx}"):
                     st.session_state.transacoes_selecionadas.add(global_idx)
-                else:
-                    st.session_state.transacoes_selecionadas.discard(global_idx)
+                else:                    st.session_state.transacoes_selecionadas.discard(global_idx)
             
             with col_content:
                 container = st.container()
         else:
             container = st.container()
-          with container:
+        
+        with container:
             # Indicador visual se está selecionada (no modo lote)
             prefix = "✅ " if modo_edicao_lote and global_idx in st.session_state.transacoes_selecionadas else ""
             
@@ -1511,220 +1737,65 @@ else:
                     st.markdown(f"**🏷️ Categoria Atual:** {row['Categoria']}")
                     if 'Origem' in row:
                         st.markdown(f"**🏦 Origem:** {row['Origem']}")
-                    
-                    # Exibir descrição personalizada se existir
+                      # Exibir descrição personalizada se existir
                     descricoes = carregar_descricoes_personalizadas()
                     hash_transacao = gerar_hash_transacao(row)
                     if hash_transacao in descricoes:
                         st.markdown(f"**📋 Nota Pessoal:** {descricoes[hash_transacao]}")
                 
-                with col2:                    # Alterar categoria
-                    nova_categoria = st.selectbox(
-                        "🏷️ Nova Categoria",
-                        get_todas_categorias(),
-                        index=get_todas_categorias().index(row['Categoria']) if row['Categoria'] in get_todas_categorias() else 0,
-                        key=f"cat_{idx}_{inicio_idx}"
-                    )
-                    
-                    if nova_categoria != row['Categoria']:
-                        if modo_edicao_lote:
-                            # Adicionar à lista de mudanças pendentes
-                            if st.button(f"📝 Adicionar Mudança", key=f"add_change_{idx}_{inicio_idx}"):
-                                descricao_normalizada = row['Descrição'].lower().strip()
-                                st.session_state.mudancas_pendentes[descricao_normalizada] = nova_categoria
-                                st.success(f"✅ Mudança adicionada: {nova_categoria}")
-                                st.rerun()
-                        else:
-                            # Aplicar mudança imediatamente
+                with col2:
+                    if modo_edicao_lote:
+                        # Interface minimalista para modo lote
+                        st.markdown("**🔄 Modo Lote**")
+                        st.info("Use os controles acima para aplicar categorias em lote. Selecione/deselecione com o checkbox à esquerda.")
+                    else:
+                        # Interface completa para modo individual
+                        nova_categoria = st.selectbox(
+                            "🏷️ Nova Categoria",
+                            get_todas_categorias(),
+                            index=get_todas_categorias().index(row['Categoria']) if row['Categoria'] in get_todas_categorias() else 0,
+                            key=f"cat_{idx}_{inicio_idx}"                        )
+                        
+                        if nova_categoria != row['Categoria']:
+                            # Aplicar mudança imediatamente no modo individual
                             if st.button(f"✅ Alterar", key=f"change_{idx}_{inicio_idx}", type="primary"):
-                                # Salvar no cache
+                                # Persistir no banco de dados
+                                success_bd = atualizar_categoria_no_banco(usuario, row['Descrição'], nova_categoria)
+                                
+                                # Também salvar no cache para compatibilidade
                                 cache = carregar_cache_categorias()
                                 descricao_normalizada = row['Descrição'].lower().strip()
                                 cache[descricao_normalizada] = nova_categoria
+                                cache_salvo = salvar_cache_categorias(cache)
                                 
-                                if salvar_cache_categorias(cache):
-                                    st.success(f"✅ Categoria alterada para: {nova_categoria}")
+                                if success_bd or cache_salvo:
+                                    msg = f"✅ Categoria alterada para: {nova_categoria}"
+                                    if success_bd:
+                                        msg += " (persistido no banco)"
+                                    st.success(msg)
                                     st.cache_data.clear()
-                                    st.rerun()                    
-                    # Adicionar/editar descrição personalizada
-                    st.markdown("---")
-                    nova_descricao = st.text_area(
-                        "📋 Nota Pessoal",
-                        value=descricoes.get(hash_transacao, ""),
-                        placeholder="Adicione uma nota pessoal...",
-                        key=f"desc_{idx}_{inicio_idx}",
-                        help="Esta nota será salva apenas para esta transação específica"
-                    )
-                    
-                    if st.button(f"💾 Salvar Nota", key=f"save_desc_{idx}_{inicio_idx}"):
-                        if salvar_descricao_personalizada(hash_transacao, nova_descricao):
-                            st.success("✅ Nota salva!")
-                            st.rerun()
-
-# Gerenciamento
-st.subheader("🔧 Gerenciamento")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    # Gerenciar transações excluídas
-    with st.expander("🗑️ Transações Excluídas"):
-        if st.button("🔍 Ver Transações Excluídas"):
-            st.info("🔄 Carregando transações excluídas...")
-            
-            # Carregar todas as transações (incluindo excluídas) 
-            transacoes_excluidas_ids = carregar_transacoes_excluidas()
-            
-            if transacoes_excluidas_ids:
-                st.warning(f"📊 {len(transacoes_excluidas_ids)} transações foram excluídas")
-                
-                # Carregar DataFrame completo
-                df_todas = carregar_transacoes()  # Carregar todas as transações (incluindo excluídas)
-                
-                if not df_todas.empty:
-                    # Filtrar apenas as excluídas
-                    df_excluidas = df_todas[df_todas.apply(lambda row: gerar_hash_transacao(row) in transacoes_excluidas_ids, axis=1)]
-                    
-                    if not df_excluidas.empty:
-                        st.dataframe(df_excluidas[['Data', 'Descrição', 'Valor', 'Categoria']])
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Erro ao salvar categoria no banco de dados!")
                         
-                        if st.button("♻️ Restaurar Todas as Transações Excluídas"):
-                            if salvar_transacoes_excluidas([]):
-                                st.success("✅ Todas as transações foram restauradas!")
-                                st.cache_data.clear()
-                                st.rerun()
-                    else:
-                        st.info("ℹ️ Não foi possível localizar as transações excluídas no DataFrame atual.")
-                else:
-                    st.error("❌ Não foi possível carregar o DataFrame completo.")
-            else:
-                st.success("✅ Nenhuma transação foi excluída!")
-
-with col2:
-    # Limpar cache de categorizações
-    with st.expander("🧹 Limpeza"):
-        st.warning("⚠️ **Atenção:** Estas ações são irreversíveis!")
-        
-        if st.button("🗑️ Limpar Cache de Categorizações", type="secondary"):
-            if st.button("⚠️ Confirmar Limpeza do Cache", type="secondary"):
-                if salvar_cache_categorias({}):
-                    st.success("✅ Cache de categorizações limpo!")
-                    st.cache_data.clear()
-                    st.rerun()
-        
-        if st.button("🗑️ Limpar Descrições Personalizadas", type="secondary"):
-            if st.button("⚠️ Confirmar Limpeza das Descrições", type="secondary"):
-                if salvar_descricoes_personalizadas({}):
-                    st.success("✅ Descrições personalizadas limpas!")
-                    st.cache_data.clear()
-                    st.rerun()
-        
-        # Recarregar dados
-        if st.button("🔄 Recarregar Todos os Dados"):
-            st.cache_data.clear()
-            st.success("✅ Cache limpo! Recarregando...")
-            st.rerun()
-
-# Exportar dados filtrados
-st.markdown("---")
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if st.button("📤 Exportar Dados Filtrados", use_container_width=True):
-        csv_data = df_filtrado.to_csv(index=False)
-        st.download_button(
-            label="💾 Baixar CSV",
-            data=csv_data,
-            file_name=f"transacoes_filtradas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
-
-with col2:
-    if st.button("📊 Exportar Categorizações", use_container_width=True):
-        cache = carregar_cache_categorias()
-        if cache:
-            import json
-            cache_data = json.dumps(cache, indent=2, ensure_ascii=False)
-            st.download_button(
-                label="💾 Baixar JSON",
-                data=cache_data,
-                file_name=f"categorizacoes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
-            )
-        else:
-            st.info("📝 Nenhuma categorização personalizada encontrada.")
-
-with col3:
-    if st.button("📋 Exportar Descrições", use_container_width=True):
-        descricoes = carregar_descricoes_personalizadas()
-        if descricoes:
-            import json
-            desc_data = json.dumps(descricoes, indent=2, ensure_ascii=False)
-            st.download_button(
-                label="💾 Baixar JSON",
-                data=desc_data,
-                file_name=f"descricoes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
-            )
-    else:
-        st.info("✨ Nenhuma descrição personalizada foi adicionada ainda.")
-        st.markdown("Use o campo de texto abaixo de cada transação para adicionar descrições personalizadas.")
-
-# Informações de ajuda
-with st.expander("ℹ️ Como usar esta página"):
-    modo_info = """
-    **🎯 Modo Crédito Ativado:**
-    - Exibe apenas transações de cartão de crédito
-    - Funcionalidades específicas: análise por estabelecimento, identificação de parcelamentos
-    - Controle de metas de gastos por categoria
-    - Filtros adaptados para compras e estornos
-    """ if modo_credito else """
-    **💳 Modo À Vista Ativado:**
-    - Exibe transações de conta corrente e transações manuais em espécie
-    - Permite adicionar transações manuais (dinheiro, PIX, transferências)
-    - Funcionalidades completas de gerenciamento de transações manuais
-    - Filtros para receitas e despesas
-    """
-    
-    st.markdown(f"""
-    ### 🎯 Objetivo
-    Esta página permite corrigir e personalizar a categorização das suas transações.
-    
-    ### 📋 Modo Atual: {tipo_gestao}
-    
-    {modo_info}
-    
-    ### 🔧 Funcionalidades Disponíveis
-    
-    **🤖 Categorização Automática com IA (NOVO):**
-    - Use Inteligência Artificial para categorizar transações automaticamente
-    - IA analisa descrição e valor para sugerir melhor categoria
-    - Revise e aprove sugestões antes de salvar
-    - Funciona nos modos à vista e crédito
-    
-    **🎨 Criar Categorias Personalizadas:**
-    - Crie suas próprias categorias (Ex: Pets, Doações, Hobby)
-    - Gerencie e remova categorias criadas
-    - Use em qualquer transação após criadas
-    
-    **⚡ Edição em Lote:**
-    - Ative o "Modo Edição em Lote" para fazer múltiplas alterações
-    - Faça quantas mudanças quiser não salvar imediatamente
-    - Visualize todas as mudanças pendentes antes de confirmar
-    - Salve todas de uma vez ou descarte se não estiver satisfeito
-    
-    **📝 Notas Personalizadas:**
-    - Adicione notas pessoais a qualquer transação
-    - Use para lembrar contexto, pessoas envolvidas, etc.
-    - As notas são salvas permanentemente
-    
-    **🔍 Filtros Avançados:**
-    - Filtre por período, categoria, tipo de transação
-    - Visualize resumos financeiros instantâneos
-    - Pagine através de grandes volumes de dados
-    
-    **💡 Dicas:**
-    - Seja específico ao nomear categorias personalizadas
-    - Use descrições padronizadas para facilitar categorizações futuras
-    - Revise periodicamente suas categorizações para manter precisão
-    """)
+                        # Adicionar/editar descrição personalizada
+                        st.markdown("---")
+                        nova_descricao = st.text_area(
+                            "📋 Nota Pessoal",
+                            value=descricoes.get(hash_transacao, ""),
+                            placeholder="Adicione uma nota pessoal...",
+                            key=f"desc_{idx}_{inicio_idx}",
+                            help="Esta nota será salva apenas para esta transação específica"                        )                        
+                        col_save, col_delete = st.columns(2)
+                        with col_save:
+                            if st.button(f"💾 Salvar Nota", key=f"save_desc_{idx}_{inicio_idx}"):
+                                if salvar_descricao_personalizada(hash_transacao, nova_descricao):
+                                    st.success("✅ Nota salva!")
+                                    st.rerun()
+                        
+                        with col_delete:
+                            if st.button(f"🗑️ Excluir Transação", key=f"delete_{idx}_{inicio_idx}", help="Excluir esta transação"):
+                                if excluir_transacao(row):
+                                    st.success("🗑️ Transação excluída!")
+                                    st.cache_data.clear()
+                                    st.rerun()
