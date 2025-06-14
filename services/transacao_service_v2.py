@@ -147,9 +147,12 @@ class TransacaoService:
             transacoes = self.transacao_repo.obter_transacoes_periodo(
                 user_id, data_inicio, data_fim, limite=1000
             )
-            
-            # Calcular métricas usando pandas para performance
+              # Calcular métricas usando pandas para performance
             if not transacoes.empty:
+                # Garantir que valores estão em formato numérico
+                transacoes['valor'] = pd.to_numeric(transacoes['valor'], errors='coerce')
+                transacoes = transacoes.dropna(subset=['valor'])
+                
                 receitas = transacoes[transacoes['valor'] > 0]['valor'].sum()
                 despesas = abs(transacoes[transacoes['valor'] < 0]['valor'].sum())
                 saldo = receitas - despesas
@@ -198,8 +201,7 @@ class TransacaoService:
                 'health_check': self.db.health_check()
             }
         
-        return ExceptionHandler.safe_execute(
-            func=_load_dashboard,
+        return ExceptionHandler.safe_execute(            func=_load_dashboard,
             error_handler=ExceptionHandler.handle_generic_error,
             default_return={'erro': True}
         )
@@ -210,8 +212,10 @@ class TransacaoService:
             return {}
         
         try:
-            # Converter data para datetime
+            # Converter data para datetime e valor para numeric
             transacoes_df['data'] = pd.to_datetime(transacoes_df['data'])
+            transacoes_df['valor'] = pd.to_numeric(transacoes_df['valor'], errors='coerce')
+            transacoes_df = transacoes_df.dropna(subset=['valor'])
             
             # Agrupar por semana
             transacoes_df['semana'] = transacoes_df['data'].dt.isocalendar().week
@@ -360,8 +364,7 @@ class TransacaoService:
     def obter_relatorio_avancado(self, user_id: int, data_inicio: str, data_fim: str, 
                                 tipo_relatorio: str = 'completo') -> Dict[str, Any]:
         """Gera relatório avançado com análises detalhadas"""
-        def _generate_report():
-            # Obter transações do período
+        def _generate_report():            # Obter transações do período
             transacoes = self.transacao_repo.obter_transacoes_periodo(
                 user_id, data_inicio, data_fim, incluir_excluidas=False
             )
@@ -373,6 +376,10 @@ class TransacaoService:
                     'mensagem': 'Nenhuma transação encontrada no período',
                     'dados': {}
                 }
+            
+            # Garantir que valores estão em formato numérico
+            transacoes['valor'] = pd.to_numeric(transacoes['valor'], errors='coerce')
+            transacoes = transacoes.dropna(subset=['valor'])
             
             # Análises básicas
             receitas = transacoes[transacoes['valor'] > 0]['valor'].sum()
@@ -669,19 +676,20 @@ class TransacaoService:
     
     def listar_transacoes_usuario(self, usuario: str, limite: int = 1000) -> pd.DataFrame:
         """Lista todas as transações de um usuário"""
-        try:
-            # Buscar usuário pelo username
+        try:            # Buscar usuário pelo username
             user_data = self.usuario_repo.obter_usuario_por_username(usuario)
             if not user_data:
                 return pd.DataFrame()
             
             user_id = user_data['id']
-              # Usar método do repository para obter transações
+            
+            # Usar método do repository para obter transações
             from datetime import datetime, timedelta
             data_fim = datetime.now().strftime('%Y-%m-%d')
             data_inicio = (datetime.now() - timedelta(days=365*2)).strftime('%Y-%m-%d')  # 2 anos
             
-            return self.transacao_repo.obter_transacoes_periodo(                user_id, data_inicio, data_fim, 
+            return self.transacao_repo.obter_transacoes_periodo(
+                user_id, data_inicio, data_fim, 
                 categorias=None, incluir_excluidas=False, limite=limite
             )
             

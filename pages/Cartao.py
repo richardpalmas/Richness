@@ -18,7 +18,7 @@ from utils.config import (
 
 # BACKEND V2 OBRIGATÓRIO - Importações exclusivas
 from utils.database_manager_v2 import DatabaseManager
-from utils.repositories_v2 import RepositoryManager
+from utils.repositories_v2 import TransacaoRepository, UsuarioRepository, CategoriaRepository
 from services.transacao_service_v2 import TransacaoService
 
 # Configuração da página
@@ -38,12 +38,16 @@ def init_backend_v2_cartao():
     """Inicializa o Backend V2 para a página de Cartão"""
     try:
         db_manager = DatabaseManager()
-        repository_manager = RepositoryManager(db_manager)
+        transacao_repo = TransacaoRepository(db_manager)
+        usuario_repo = UsuarioRepository(db_manager)
+        categoria_repo = CategoriaRepository(db_manager)
         transacao_service = TransacaoService()
         
         return {
             'db_manager': db_manager,
-            'repository_manager': repository_manager,
+            'transacao_repo': transacao_repo,
+            'usuario_repo': usuario_repo,
+            'categoria_repo': categoria_repo,
             'transacao_service': transacao_service
         }
     except Exception as e:

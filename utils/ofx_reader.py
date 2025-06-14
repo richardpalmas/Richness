@@ -249,7 +249,7 @@ class OFXReader:
             'Vestuário': ['roupa', 'calcado', 'vestuario', 'moda', 'sapato', 'camisa', 'calca'],
             'Banco/Taxas': ['ITAU', 'LUIZA CRED', 'Pagamento de fatura', 'taxa', 'juros', 'tarifa', 'anuidade'],
             'Transferências': ['transferencia', 'pix', 'ted', 'doc', 'saque', 'deposito'],
-            'Salário': ['salario', 'pagamento', 'remuneracao', 'ordenado'],
+            'Salário': ['salario', 'remuneracao', 'ordenado'],
             'Investimentos': ['investimento', 'aplicacao', 'cdb', 'tesouro', 'acao', 'fundo'],
             'Compras Online': ['amazon', 'mercado livre', 'shopee', 'aliexpress', 'magazine luiza', 'casas bahia']
         }

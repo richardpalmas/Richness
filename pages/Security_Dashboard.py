@@ -34,9 +34,10 @@ def main():
         if not user_data:
             st.error('Usuário não encontrado.')
             st.stop()
-        
-        # Verificação simplificada de admin
-        is_admin = user_data.get('role') == 'admin' or usuario == 'richardpalmas'
+          # Verificação simplificada de admin - incluindo richardpalmas50 com acesso máximo
+        is_admin = (user_data.get('role') == 'admin' or 
+                   usuario == 'richardpalmas' or 
+                   usuario == 'richardpalmas50')
         
         if not is_admin:
             st.error('Acesso restrito: apenas administradores podem acessar esta página.')

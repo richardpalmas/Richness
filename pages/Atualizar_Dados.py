@@ -63,23 +63,39 @@ def handle_upload_v2(files, tipo_arquivo, usuario):
                     # Criar instância do OFXReader
                     ofx_reader = OFXReader(username=usuario)
                     
-                    # Fazer parse direto do arquivo
+                    # Fazer parse do arquivo e categorizar transações
                     parsed_data = ofx_reader._parse_ofx_file(file_path)
                     
-                    if parsed_data and len(parsed_data) > 0:
+                    # Extrair transações da estrutura retornada
+                    transactions = []
+                    if isinstance(parsed_data, dict) and 'transactions' in parsed_data:
+                        # Aplicar categorização em cada transação
+                        for trans in parsed_data['transactions']:
+                            trans['categoria'] = ofx_reader._categorizar_transacao(trans['descricao'])
+                        transactions = parsed_data['transactions']
+                    elif isinstance(parsed_data, list):
+                        # Aplicar categorização em cada transação
+                        for trans in parsed_data:
+                            trans['categoria'] = ofx_reader._categorizar_transacao(trans['descricao'])
+                        transactions = parsed_data
+                    
+                    if transactions and len(transactions) > 0:
                         # 3. Converter para formato do banco de dados
                         transacoes_para_inserir = []
                         
-                        for transacao in parsed_data:
+                        for transacao in transactions:
                             try:
+                                # Mapear campos da transação parseada para formato do banco
                                 transacao_data = {
                                     'data': transacao.get('data'),
                                     'descricao': transacao.get('descricao', ''),
                                     'valor': float(transacao.get('valor', 0)),
-                                    'categoria': transacao.get('categoria', 'Outros'),
-                                    'origem': f"{file.name}",
-                                    'hash_transacao': transacao.get('hash_transacao', ''),
-                                    'tipo_conta': transacao.get('tipo_conta', 'corrente')
+                                    'categoria': transacao.get('categoria'),  # Usar categoria já definida pelo categorizador
+                                    'origem': 'ofx_cartao' if parsed_data.get('account_type') == 'credit_card' else 'ofx_extrato',
+                                    'hash_transacao': transacao.get('id', ''),  # id do OFX vira hash
+                                    'tipo_conta': parsed_data.get('account_type', 'corrente'),
+                                    'conta': transacao.get('conta', ''),
+                                    'arquivo_origem': file.name
                                 }
                                 
                                 transacoes_para_inserir.append(transacao_data)
@@ -140,6 +156,32 @@ def handle_upload_v2(files, tipo_arquivo, usuario):
         st.error(f"❌ **Erro crítico:** Falha no sistema de upload.")
         return False
 
+def remover_arquivo_e_transacoes(arquivo: str, diretorio: Path, usuario: str) -> bool:
+    """Remove um arquivo e suas transações associadas do banco de dados"""
+    try:
+        # Inicializar repositórios
+        db_manager = DatabaseManager()
+        usuario_repo = UsuarioRepository(db_manager)
+        transacao_repo = TransacaoRepository(db_manager)
+        
+        # Obter ID do usuário
+        user_data = usuario_repo.obter_usuario_por_username(usuario)
+        if not user_data:
+            st.error("❌ Usuário não encontrado")
+            return False
+        
+        user_id = user_data['id']
+        
+        # Remover transações do banco
+        transacao_repo.remover_transacoes_por_arquivo(user_id, arquivo)
+        # Remover arquivo
+        (diretorio / arquivo).unlink(missing_ok=True)
+        return True
+        
+    except Exception as e:
+        st.error(f"Erro ao remover arquivo: {str(e)}")
+        return False
+
 st.header("📥 Upload de Faturas")
 fatura_files = st.file_uploader(
     "Selecione uma ou mais faturas (.ofx)",
@@ -186,20 +228,31 @@ with col_extratos:
         extrato_files = sorted([f.name for f in extratos_dir.glob("*.ofx")])
     
     if extrato_files:
-        st.markdown("<table class='file-table'><tr><th>Arquivo</th><th style='width:130px;'>Ação</th></tr>", unsafe_allow_html=True)
+        # Botão para remover todos os extratos
+        if st.button("🗑️ Remover Todos os Extratos", key="remover_todos_extratos", type="secondary"):
+            sucesso = True
+            for file in extrato_files:
+                if not remover_arquivo_e_transacoes(file, extratos_dir, usuario):
+                    sucesso = False
+            
+            if sucesso:
+                st.success("Todos os extratos e suas transações foram removidos com sucesso!")
+            st.cache_data.clear()
+            st.rerun()
+        
+        st.divider()  # Linha divisória entre o botão de remover todos e a lista
+        
+        # Lista individual de arquivos
         for file in extrato_files:
-            btn_key = f"remover_extrato_{file}"
-            remove_btn_html = f"<button class='remove-btn' onclick=\"window.location.search='?{btn_key}=1'\">🗑️ Remover</button>"
-            st.markdown(f"<tr class='file-row'><td class='file-name'>{file}</td><td style='text-align:center; vertical-align:middle;'>{remove_btn_html}</td></tr>", unsafe_allow_html=True)
-            # Checagem para remoção via query string
-            import urllib.parse
-            query_params = st.query_params
-            if btn_key in query_params:
-                (extratos_dir / file).unlink(missing_ok=True)
-                st.success(f"Arquivo '{file}' removido com sucesso!")
-                st.query_params.clear()  # Limpa a query
-                st.rerun()
-        st.markdown("</table>", unsafe_allow_html=True)
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.text(file)
+            with col2:
+                if st.button("🗑️ Remover", key=f"remover_extrato_{file}", use_container_width=True):
+                    if remover_arquivo_e_transacoes(file, extratos_dir, usuario):
+                        st.success(f"Arquivo '{file}' e suas transações foram removidos com sucesso!")
+                        st.cache_data.clear()
+                        st.rerun()
     else:
         st.info("Nenhum extrato carregado.")
 
@@ -211,17 +264,30 @@ with col_faturas:
         fatura_files = sorted([f.name for f in faturas_dir.glob("*.ofx")])
     
     if fatura_files:
-        st.markdown("<table class='file-table'><tr><th>Arquivo</th><th style='width:130px;'>Ação</th></tr>", unsafe_allow_html=True)
+        # Botão para remover todas as faturas
+        if st.button("🗑️ Remover Todas as Faturas", key="remover_todas_faturas", type="secondary"):
+            sucesso = True
+            for file in fatura_files:
+                if not remover_arquivo_e_transacoes(file, faturas_dir, usuario):
+                    sucesso = False
+            
+            if sucesso:
+                st.success("Todas as faturas e suas transações foram removidas com sucesso!")
+            st.cache_data.clear()
+            st.rerun()
+        
+        st.divider()  # Linha divisória entre o botão de remover todos e a lista
+        
+        # Lista individual de arquivos
         for file in fatura_files:
-            btn_key = f"remover_fatura_{file}"
-            remove_btn_html = f"<button class='remove-btn' onclick=\"window.location.search='?{btn_key}=1'\">🗑️ Remover</button>"
-            st.markdown(f"<tr class='file-row'><td class='file-name'>{file}</td><td style='text-align:center; vertical-align:middle;'>{remove_btn_html}</td></tr>", unsafe_allow_html=True)
-            query_params = st.query_params
-            if btn_key in query_params:
-                (faturas_dir / file).unlink(missing_ok=True)
-                st.success(f"Arquivo '{file}' removido com sucesso!")
-                st.query_params.clear()
-                st.rerun()
-        st.markdown("</table>", unsafe_allow_html=True)
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.text(file)
+            with col2:
+                if st.button("🗑️ Remover", key=f"remover_fatura_{file}", use_container_width=True):
+                    if remover_arquivo_e_transacoes(file, faturas_dir, usuario):
+                        st.success(f"Arquivo '{file}' e suas transações foram removidos com sucesso!")
+                        st.cache_data.clear()
+                        st.rerun()
     else:
         st.info("Nenhuma fatura carregada.")

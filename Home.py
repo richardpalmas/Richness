@@ -10,10 +10,11 @@ from datetime import datetime
 from componentes.profile_pic_component import boas_vindas_com_foto
 from utils.exception_handler import ExceptionHandler
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario, calcular_resumo_financeiro
+from utils.filtros import filtro_data, filtro_categorias, aplicar_filtros
 
 # BACKEND V2 OBRIGATÓRIO - Importações exclusivas
 from utils.database_manager_v2 import DatabaseManager
-from utils.repositories_v2 import RepositoryManager
+from utils.repositories_v2 import TransacaoRepository, UsuarioRepository, CategoriaRepository
 from services.transacao_service_v2 import TransacaoService
 from utils.database_monitoring import DatabaseMonitor
 
@@ -118,8 +119,7 @@ def autenticar_usuario_v2(usuario, senha):
     try:
         # Inicializar Backend V2
         db_manager = DatabaseManager()
-        repository_manager = RepositoryManager(db_manager)
-        user_repo = repository_manager.get_repository('usuarios')
+        user_repo = UsuarioRepository(db_manager)
         
         # Verificar senha usando método seguro
         user_data = user_repo.verificar_senha(usuario, senha)
@@ -147,7 +147,9 @@ def init_backend_v2_obrigatorio():
     """Inicializa o Backend V2 - OBRIGATÓRIO"""
     try:
         db_manager = DatabaseManager()
-        repository_manager = RepositoryManager(db_manager)
+        usuario_repo = UsuarioRepository(db_manager)
+        transacao_repo = TransacaoRepository(db_manager)
+        categoria_repo = CategoriaRepository(db_manager)
         transacao_service = TransacaoService()
         
         # Inicializar monitor opcionalmente (sem falhar se não existir)
@@ -161,8 +163,7 @@ def init_backend_v2_obrigatorio():
         # Teste básico de funcionamento
         try:
             # Verificar se o banco V2 está acessível
-            usuarios_repo = repository_manager.get_repository('usuarios')
-            usuarios = usuarios_repo.buscar_todos()
+            usuarios = usuario_repo.buscar_todos()
             if isinstance(usuarios, list):  # Se retornou uma lista, está funcionando
                 pass  # Tudo OK
         except Exception as e:
@@ -173,7 +174,9 @@ def init_backend_v2_obrigatorio():
         
         return {
             'db_manager': db_manager,
-            'repository_manager': repository_manager,
+            'usuario_repo': usuario_repo,
+            'transacao_repo': transacao_repo,
+            'categoria_repo': categoria_repo,
             'transacao_service': transacao_service,
             'monitor': monitor
         }
@@ -212,7 +215,7 @@ st.title("🚀 Dashboard Financeiro")
 
 # Carregar dados principais do usuário
 @st.cache_data(ttl=600)
-def carregar_dados_v2(usuario, force_refresh=False):
+def carregar_dados_v2(usuario, data_inicio=None, data_fim=None, force_refresh=False):
     """Carrega dados do usuário usando APENAS o Backend V2"""
     try:
         transacao_service = backend_v2['transacao_service']
@@ -223,6 +226,14 @@ def carregar_dados_v2(usuario, force_refresh=False):
         if df_transacoes.empty:
             return {}, pd.DataFrame()
         
+        # Aplicar filtro de período se especificado
+        if data_inicio and data_fim and 'data' in df_transacoes.columns:
+            df_transacoes['data_dt'] = pd.to_datetime(df_transacoes['data'])
+            df_transacoes = df_transacoes[
+                (df_transacoes['data_dt'] >= pd.to_datetime(data_inicio)) & 
+                (df_transacoes['data_dt'] <= pd.to_datetime(data_fim))
+            ].drop('data_dt', axis=1)
+        
         # Calcular saldos por origem
         saldos_info = transacao_service.calcular_saldos_por_origem(usuario)
         
@@ -232,16 +243,32 @@ def carregar_dados_v2(usuario, force_refresh=False):
         st.error(f"❌ Erro ao carregar dados V2: {str(e)}")
         return {}, pd.DataFrame()
 
-# Carregar dados
-saldos_info, df = carregar_dados_v2(usuario)
-
-st.markdown("---")
-
-# Sidebar - Configurações
+# Sidebar - Configurações e Filtros (configurar antes de carregar dados)
 st.sidebar.header("⚙️ Configurações V2")
 st.sidebar.markdown("**Backend V2 Ativo** 🚀")
 
-# Informações do usuário
+# Carregar dados iniciais para definir range de datas
+saldos_info_inicial, df_inicial = carregar_dados_v2(usuario)
+
+# Filtros na sidebar
+st.sidebar.markdown("### 🔍 Filtros")
+
+# Filtro de período
+data_inicio, data_fim = None, None
+if not df_inicial.empty and 'data' in df_inicial.columns:
+    # Converter coluna de data se necessário
+    df_for_filter = df_inicial.copy()
+    df_for_filter['Data'] = pd.to_datetime(df_for_filter['data'])
+    data_inicio, data_fim = filtro_data(df_for_filter, key_prefix="home")
+    
+    st.sidebar.success(f"📅 Período: {data_inicio} a {data_fim}")
+
+# Carregar dados com filtro aplicado
+saldos_info, df = carregar_dados_v2(usuario, data_inicio, data_fim)
+
+st.markdown("---")
+
+# Informações do usuário na sidebar
 if st.sidebar.expander("👤 Informações do Usuário"):
     st.sidebar.write(f"**Usuário**: {usuario}")
     st.sidebar.write(f"**Transações**: {len(df) if not df.empty else 0}")
