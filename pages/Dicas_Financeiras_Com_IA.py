@@ -640,8 +640,6 @@ def main():
         index=0,        help="Escolha o estilo de comunicação que você prefere para suas análises e respostas"
     )
     
-    st.markdown("---")
-    
     # === FILTRO DE PERÍODO ===
     st.subheader("📅 Selecionar Período de Análise")
     

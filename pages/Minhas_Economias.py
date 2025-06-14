@@ -412,22 +412,3 @@ try:
 
 except Exception as e:
     st.error(f"❌ Erro ao carregar compromissos: {str(e)}")
-
-
-
-# Extrato detalhado (colapsado para economia de espaço)
-with st.expander("📋 Ver Extrato Detalhado"):
-    df_formatado = formatar_df_monetario(df_filtrado, "Valor")
-    st.dataframe(
-        df_formatado[["Data", "Categoria", "Descrição", "ValorFormatado"]].rename(
-            columns={"ValorFormatado": "Valor"}
-        ),
-        use_container_width=True
-    )
-
-# Botão sair sempre visível
-if st.session_state.get('autenticado', False):
-    if st.button('🚪 Sair', key='logout_btn'):
-        st.session_state.clear()
-        st.success('Você saiu do sistema.')
-        st.rerun()

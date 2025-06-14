@@ -8,7 +8,6 @@ import hashlib
 
 from componentes.profile_pic_component import boas_vindas_com_foto
 from utils.formatacao import formatar_valor_monetario, formatar_df_monetario
-from utils.filtros import filtro_categorias, aplicar_filtros
 from utils.config import (
     get_cache_categorias_file,
     get_descricoes_personalizadas_file,
@@ -155,7 +154,7 @@ if usuario:
 
 # Título principal
 st.title("💳 Cartão de Crédito")
-st.markdown("**Análise completa de transações de cartão de crédito com Backend V2**")
+st.markdown("**Análise completa de transações de cartão de crédito**")
 
 # Carregar dados de cartão usando Backend V2
 @st.cache_data(ttl=600, show_spinner="Carregando transações de cartão...")
@@ -291,34 +290,13 @@ if df_cartao.empty:
     
     st.stop()
 
-# Filtros adicionais de categorias
-st.subheader("🔍 Filtros Avançados")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("**📊 Informações do Período**")
-    if not df_cartao.empty:
-        data_inicio_display = pd.to_datetime(df_cartao['Data']).min()
-        data_fim_display = pd.to_datetime(df_cartao['Data']).max()
-        st.info(f"📅 **Período**: {data_inicio_display.strftime('%d/%m/%Y')} a {data_fim_display.strftime('%d/%m/%Y')}")
-
-with col2:
-    # Aplicar filtro de categorias
-    if not df_cartao.empty and 'Categoria' in df_cartao.columns:
-        categorias_selecionadas = filtro_categorias(df_cartao, titulo="Filtrar Categorias", key_prefix="cartao_v2")
-        
-        # Aplicar filtros se categorias foram selecionadas
-        if categorias_selecionadas:
-            df_final = df_cartao[df_cartao['Categoria'].isin(categorias_selecionadas)]
-        else:
-            df_final = df_cartao
-    else:
-        df_final = df_cartao
+# Aplicar dados sem filtros avançados - usar todos os dados do cartão
+df_final = df_cartao
 
 if df_final.empty:
-    st.warning("🔍 Nenhuma transação encontrada com os filtros aplicados.")
-    st.info("💡 Ajuste os filtros de categoria para ver as transações.")
+    st.warning("🔍 Nenhuma transação encontrada.")
+    st.info("💡 Verifique se há dados de cartão disponíveis.")
+    st.stop()
     st.stop()
 
 # Dashboard principal
@@ -359,67 +337,64 @@ with col4:
 st.markdown("---")
 
 # Gráficos de análise
-st.subheader("📈 Análises do Cartão")
+with st.expander("📈 Análises do Cartão", expanded=False):
+    col1, col2 = st.columns(2)
 
-col1, col2 = st.columns(2)
+    with col1:
+        # Gráfico de gastos por categoria
+        if "Categoria" in df_final.columns:
+            categoria_gastos = df_final.groupby("Categoria")["Valor"].sum().reset_index()
+            categoria_gastos["Valor_Abs"] = categoria_gastos["Valor"].abs()
+            categoria_gastos = categoria_gastos.sort_values("Valor_Abs", ascending=False)
+            
+            fig_categorias = px.pie(
+                categoria_gastos,
+                names="Categoria",
+                values="Valor_Abs",
+                title="💸 Gastos por Categoria",
+                template="plotly_white"
+            )
+            
+            fig_categorias.update_layout(height=400)
+            st.plotly_chart(fig_categorias, use_container_width=True)
 
-with col1:
-    # Gráfico de gastos por categoria
-    if "Categoria" in df_final.columns:
-        categoria_gastos = df_final.groupby("Categoria")["Valor"].sum().reset_index()
-        categoria_gastos["Valor_Abs"] = categoria_gastos["Valor"].abs()
-        categoria_gastos = categoria_gastos.sort_values("Valor_Abs", ascending=False)
-        
-        fig_categorias = px.pie(
-            categoria_gastos,
-            names="Categoria",
-            values="Valor_Abs",
-            title="💸 Gastos por Categoria",
-            template="plotly_white"
-        )
-        
-        fig_categorias.update_layout(height=400)
-        st.plotly_chart(fig_categorias, use_container_width=True)
-
-with col2:
-    # Gráfico de evolução temporal
-    if not df_final.empty:
-        df_temp = df_final.copy()
-        df_temp["Data"] = pd.to_datetime(df_temp["Data"])
-        df_temp["Mes"] = df_temp["Data"].dt.to_period("M").astype(str)
-        evolucao_mensal = df_temp.groupby("Mes")["Valor"].sum().reset_index()
-        evolucao_mensal["Valor_Abs"] = evolucao_mensal["Valor"].abs()
-        
-        fig_evolucao = px.bar(
-            evolucao_mensal,
-            x="Mes",
-            y="Valor_Abs",
-            title="📊 Gastos Mensais",
-            template="plotly_white"
-        )
-        
-        fig_evolucao.update_layout(height=400)
-        st.plotly_chart(fig_evolucao, use_container_width=True)
+    with col2:
+        # Gráfico de evolução temporal
+        if not df_final.empty:
+            df_temp = df_final.copy()
+            df_temp["Data"] = pd.to_datetime(df_temp["Data"])
+            df_temp["Mes"] = df_temp["Data"].dt.to_period("M").astype(str)
+            evolucao_mensal = df_temp.groupby("Mes")["Valor"].sum().reset_index()
+            evolucao_mensal["Valor_Abs"] = evolucao_mensal["Valor"].abs()
+            
+            fig_evolucao = px.bar(
+                evolucao_mensal,
+                x="Mes",
+                y="Valor_Abs",
+                title="📊 Gastos Mensais",
+                template="plotly_white"
+            )
+            
+            fig_evolucao.update_layout(height=400)
+            st.plotly_chart(fig_evolucao, use_container_width=True)
 
 # Top gastos
-st.subheader("🔝 Maiores Gastos do Período")
-if not df_final.empty:
-    top_gastos = df_final.nsmallest(10, "Valor").copy()
-    
-    # Incluir coluna Nota se existe e tem dados
-    colunas_exibir = ["Data", "Descrição", "Valor", "Categoria"]
-    if "Nota" in top_gastos.columns and top_gastos["Nota"].notna().any() and (top_gastos["Nota"] != "").any():
-        colunas_exibir.insert(-1, "Nota")  # Inserir antes da Categoria
-    
-    top_gastos = top_gastos[colunas_exibir]
-    top_gastos["Valor"] = top_gastos["Valor"].abs()
-    top_gastos_formatado = formatar_df_monetario(top_gastos)
-    
-    st.dataframe(top_gastos_formatado, use_container_width=True)
+with st.expander("🔝 Maiores Gastos do Período", expanded=False):
+    if not df_final.empty:
+        top_gastos = df_final.nsmallest(10, "Valor").copy()
+        
+        # Incluir coluna Nota se existe e tem dados
+        colunas_exibir = ["Data", "Descrição", "Valor", "Categoria"]
+        if "Nota" in top_gastos.columns and top_gastos["Nota"].notna().any() and (top_gastos["Nota"] != "").any():
+            colunas_exibir.insert(-1, "Nota")  # Inserir antes da Categoria
+        
+        top_gastos = top_gastos[colunas_exibir]
+        top_gastos["Valor"] = top_gastos["Valor"].abs()
+        top_gastos_formatado = formatar_df_monetario(top_gastos)
+        
+        st.dataframe(top_gastos_formatado, use_container_width=True)
 
 # Análise detalhada por categorias com abas
-st.subheader("📊 Transações por Categoria")
-
 # Função para formatar DataFrame com descrições personalizadas (igual à Home)
 def formatar_df_com_descricoes(df):
     """Formata o DataFrame adicionando descrições personalizadas e removendo coluna Id"""
@@ -467,130 +442,86 @@ def formatar_df_com_descricoes(df):
     
     return df_formatado[colunas_ordenadas]
 
-if not df_final.empty and 'Categoria' in df_final.columns:
-    categorias_periodo = sorted(df_final['Categoria'].unique())
-    
-    # Criar lista de abas: "Todas" + categorias específicas
-    abas_disponiveis = ["📊 Todas"] + [f"🏷️ {cat}" for cat in categorias_periodo]
-    
-    # Criar abas usando st.tabs
-    tabs = st.tabs(abas_disponiveis)
-    
-    with tabs[0]:  # Aba "Todas"
-        st.markdown("**Todas as transações do cartão no período**")
+with st.expander("📊 Transações por Categoria", expanded=False):
+    if not df_final.empty and 'Categoria' in df_final.columns:
+        categorias_periodo = sorted(df_final['Categoria'].unique())
         
-        # Mostrar resumo
-        total_transacoes_aba = len(df_final)
-        valor_total_aba = abs(df_final["Valor"].sum())
+        # Criar lista de abas: "Todas" + categorias específicas
+        abas_disponiveis = ["📊 Todas"] + [f"🏷️ {cat}" for cat in categorias_periodo]
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("💼 Total", total_transacoes_aba)
-        with col2:
-            st.metric("💰 Total Gasto", formatar_valor_monetario(valor_total_aba))
-        with col3:
-            despesas_count = len(df_final[df_final["Valor"] < 0])
-            st.metric("� Despesas", despesas_count)
+        # Criar abas usando st.tabs
+        tabs = st.tabs(abas_disponiveis)
         
-        # Tabela formatada com descrições personalizadas
-        df_display_todas = formatar_df_com_descricoes(df_final.head(50))
-        # Para cartão, mostrar valores como positivos na tabela
-        if "Valor" in df_display_todas.columns:
-            df_display_todas["Valor"] = df_display_todas["Valor"].abs()
-            df_display_todas = formatar_df_monetario(df_display_todas)
-        
-        st.dataframe(
-            df_display_todas,
-            use_container_width=True,
-            height=400
-        )
-        
-        if len(df_final) > 50:
-            st.caption(f"📄 Exibindo 50 de {len(df_final)} transações (ordenadas por data mais recente)")
-    
-    # Abas para cada categoria
-    for i, categoria in enumerate(categorias_periodo, 1):
-        with tabs[i]:
-            # Filtrar transações da categoria
-            df_categoria = df_final[df_final["Categoria"] == categoria]
+        with tabs[0]:  # Aba "Todas"
+            st.markdown("**Todas as transações do cartão no período**")
             
-            st.markdown(f"**Transações da categoria: {categoria}**")
-            
-            # Mostrar resumo da categoria
-            total_cat = len(df_categoria)
-            valor_cat = abs(df_categoria["Valor"].sum())
-            despesas_cat = len(df_categoria[df_categoria["Valor"] < 0])
+            # Mostrar resumo
+            total_transacoes_aba = len(df_final)
+            valor_total_aba = abs(df_final["Valor"].sum())
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("💼 Transações", total_cat)
+                st.metric("💼 Total", total_transacoes_aba)
             with col2:
-                st.metric("💰 Total", formatar_valor_monetario(valor_cat))
+                st.metric("💰 Total Gasto", formatar_valor_monetario(valor_total_aba))
             with col3:
-                st.metric("� Despesas", despesas_cat)
+                despesas_count = len(df_final[df_final["Valor"] < 0])
+                st.metric("💸 Despesas", despesas_count)
             
-            if not df_categoria.empty:
-                # Tabela formatada da categoria com descrições personalizadas
-                df_display_cat = formatar_df_com_descricoes(df_categoria.head(50))
-                # Para cartão, mostrar valores como positivos na tabela
-                if "Valor" in df_display_cat.columns:
-                    df_display_cat["Valor"] = df_display_cat["Valor"].abs()
-                    df_display_cat = formatar_df_monetario(df_display_cat)
-                
-                st.dataframe(
-                    df_display_cat,
-                    use_container_width=True,
-                    height=400
-                )
-                
-                if len(df_categoria) > 50:
-                    st.caption(f"📄 Exibindo 50 de {len(df_categoria)} transações desta categoria")
-            else:
-                st.info("📭 Nenhuma transação encontrada nesta categoria para o período selecionado.")
-else:
-    st.info("📊 Nenhuma transação de cartão disponível para análise por categorias.")
-
-# Informações técnicas
-st.markdown("---")
-with st.expander("ℹ️ Informações Técnicas V2"):
-    if not df_final.empty:
-        data_inicio = pd.to_datetime(df_final['Data']).min()
-        data_fim = pd.to_datetime(df_final['Data']).max()
-        st.write(f"**Período analisado:** {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
-        st.write(f"**Total de registros:** {len(df_final):,}")
+            # Tabela formatada com descrições personalizadas
+            df_display_todas = formatar_df_com_descricoes(df_final.head(50))
+            # Para cartão, mostrar valores como positivos na tabela
+            if "Valor" in df_display_todas.columns:
+                df_display_todas["Valor"] = df_display_todas["Valor"].abs()
+                df_display_todas = formatar_df_monetario(df_display_todas)
+            
+            st.dataframe(
+                df_display_todas,
+                use_container_width=True,
+                height=400
+            )
+            
+            if len(df_final) > 50:
+                st.caption(f"📄 Exibindo 50 de {len(df_final)} transações (ordenadas por data mais recente)")
         
-        # Análise por origem
-        if 'Origem' in df_final.columns:
-            origens = df_final['Origem'].value_counts()
-            st.write("**Origem dos dados:**")
-            for origem, count in origens.items():
-                st.write(f"- {origem}: {count} transações")
-    
-    # Estatísticas de personalizações
-    st.markdown("**📊 Personalizações aplicadas:**")
-    
-    cache_categorias = carregar_cache_categorias()
-    descricoes_personalizadas = carregar_descricoes_personalizadas()
-    transacoes_excluidas = carregar_transacoes_excluidas()
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("🏷️ Categorias personalizadas", len(cache_categorias))
-    with col2:
-        st.metric("📝 Descrições personalizadas", len(descricoes_personalizadas))
-    with col3:
-        st.metric("🗑️ Transações excluídas", len(transacoes_excluidas))
-    
-    if cache_categorias or descricoes_personalizadas or transacoes_excluidas:
-        st.info("💡 As personalizações feitas na página 'Gerenciar Transações' são aplicadas automaticamente aqui.")
-    
-    st.markdown("**🚀 Sistema:** Backend V2 com isolamento por usuário")
-    st.markdown("**🔒 Segurança:** Dados criptografados e auditados")
-    
-    # Botão para limpar cache
-    if st.button("🧹 Limpar Cache V2"):
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.success("Cache limpo! Recarregue a página para ver os dados atualizados.")
-
-st.success("✅ **Página de Cartão V2 carregada com sucesso!** Todos os dados são específicos do seu usuário e isolados.")
+        # Abas para cada categoria
+        for i, categoria in enumerate(categorias_periodo, 1):
+            with tabs[i]:
+                # Filtrar transações da categoria
+                df_categoria = df_final[df_final["Categoria"] == categoria]
+                
+                st.markdown(f"**Transações da categoria: {categoria}**")
+                
+                # Mostrar resumo da categoria
+                total_cat = len(df_categoria)
+                valor_cat = abs(df_categoria["Valor"].sum())
+                despesas_cat = len(df_categoria[df_categoria["Valor"] < 0])
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("💼 Transações", total_cat)
+                with col2:
+                    st.metric("💰 Total", formatar_valor_monetario(valor_cat))
+                with col3:
+                    st.metric("💸 Despesas", despesas_cat)
+                
+                if not df_categoria.empty:
+                    # Tabela formatada da categoria com descrições personalizadas
+                    df_display_cat = formatar_df_com_descricoes(df_categoria.head(50))
+                    # Para cartão, mostrar valores como positivos na tabela
+                    if "Valor" in df_display_cat.columns:
+                        df_display_cat["Valor"] = df_display_cat["Valor"].abs()
+                        df_display_cat = formatar_df_monetario(df_display_cat)
+                    
+                    st.dataframe(
+                        df_display_cat,
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    if len(df_categoria) > 50:
+                        st.caption(f"📄 Exibindo 50 de {len(df_categoria)} transações desta categoria")
+                else:
+                    st.info("📭 Nenhuma transação encontrada nesta categoria para o período selecionado.")
+    else:
+        st.info("📊 Nenhuma transação de cartão disponível para análise por categorias.")
