@@ -182,7 +182,6 @@ def init_backend_sistema():
             # Monitor é opcional, continuar sem ele
             pass
         
-        # Teste básico de funcionamento
         try:
             # Verificar se o banco V2 está acessível
             usuarios = usuario_repo.buscar_todos()
@@ -223,6 +222,15 @@ if st.sidebar.button("🔄 Limpar Cache", help="Limpa cache do sistema"):
 
 # Obter usuário da sessão
 usuario = st.session_state.get('usuario', 'default')
+
+# Função auxiliar para obter user_id
+def obter_user_id(usuario):
+    """Obtém o ID do usuário a partir do username"""
+    try:
+        user_data = backend_sistema['usuario_repo'].obter_usuario_por_username(usuario)
+        return user_data['id'] if user_data else None
+    except:
+        return None
 
 # Boas-vindas com foto de perfil
 if usuario:
@@ -498,6 +506,19 @@ with col4:
         "🎯 Ticket Médio",
         formatar_valor_monetario(ticket_medio)
     )
+
+st.markdown("---")
+
+# Dashboard de Insights Financeiros
+try:
+    from componentes.insights_dashboard import exibir_insights_dashboard
+    user_id = obter_user_id(usuario)
+    if user_id:
+        exibir_insights_dashboard(user_id)
+    else:
+        st.warning("⚠️ Usuário não encontrado para exibir insights")
+except Exception as e:
+    st.warning(f"⚠️ Erro ao carregar insights: {str(e)}")
 
 st.markdown("---")
 

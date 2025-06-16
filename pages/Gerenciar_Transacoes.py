@@ -135,8 +135,6 @@ def atualizar_categorias_lote_no_banco(usuario, mapeamento_descricoes):
         
         if not mapeamento_hashes:
             st.warning(f"Nenhuma transação foi encontrada no banco para as {len(mapeamento_descricoes)} descrições fornecidas")
-            # Debug: mostrar as descrições que não foram encontradas
-            st.info(f"Descrições buscadas: {', '.join(list(mapeamento_descricoes.keys())[:3])}...")
             return 0
         
         resultado = transacao_repo.atualizar_categorias_lote(
