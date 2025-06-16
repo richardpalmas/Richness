@@ -197,6 +197,26 @@ class TransacaoRepository(BaseRepository):
         results = self.db.executar_batch(queries)
         return sum(results)
 
+    def obter_transacoes_usuario_categorizado(self, user_id: int) -> pd.DataFrame:
+        """Obtém transações do usuário que já foram categorizadas"""
+        try:
+            query = """
+                SELECT t.hash_transacao, t.data, t.descricao, t.valor, t.categoria, t.tipo, t.origem
+                FROM transacoes t
+                LEFT JOIN transacoes_excluidas te ON t.user_id = te.user_id AND t.hash_transacao = te.hash_transacao
+                WHERE t.user_id = ? 
+                  AND t.categoria IS NOT NULL 
+                  AND t.categoria != 'Outros'
+                  AND te.hash_transacao IS NULL
+                ORDER BY t.data DESC
+            """
+            
+            with self.db.get_connection() as conn:
+                df = pd.read_sql_query(query, conn, params=[user_id])
+            return df
+        except Exception:
+            return pd.DataFrame()
+
 class UsuarioRepository(BaseRepository):
     """Repository para operações com usuários"""
     

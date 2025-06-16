@@ -228,8 +228,9 @@ def obter_user_id(usuario):
     """Obtém o ID do usuário a partir do username"""
     try:
         user_data = backend_sistema['usuario_repo'].obter_usuario_por_username(usuario)
-        return user_data['id'] if user_data else None
-    except:
+        user_id = user_data['id'] if user_data else None
+        return user_id
+    except Exception as e:
         return None
 
 # Boas-vindas com foto de perfil
@@ -461,10 +462,10 @@ with col3:
 # Calcular resumo financeiro usando lógica simples (igual à aba Despesas)
 if not df.empty and 'valor' in df.columns:
     # Calcular receitas (valores positivos)
-    receitas_simples = df[df['valor'] > 0]['valor'].sum()
+    receitas_simples = df.loc[df['valor'] > 0, 'valor'].sum()
     
     # Calcular despesas (valores negativos) - mesma lógica da aba Despesas
-    despesas_simples = abs(df[df['valor'] < 0]['valor'].sum())
+    despesas_simples = abs(df.loc[df['valor'] < 0, 'valor'].sum())
     
     # Calcular saldo
     saldo_simples = receitas_simples - despesas_simples
@@ -501,7 +502,8 @@ with col3:
     )
 
 with col4:
-    ticket_medio = abs(resumo["despesas"]) / len(df[df['valor'] < 0]) if len(df[df['valor'] < 0]) > 0 else 0
+    despesas_mask = df['valor'] < 0
+    ticket_medio = abs(resumo["despesas"]) / len(df.loc[despesas_mask]) if len(df.loc[despesas_mask]) > 0 else 0
     st.metric(
         "🎯 Ticket Médio",
         formatar_valor_monetario(ticket_medio)
@@ -509,16 +511,109 @@ with col4:
 
 st.markdown("---")
 
-# Dashboard de Insights Financeiros
-try:
-    from componentes.insights_dashboard import exibir_insights_dashboard
-    user_id = obter_user_id(usuario)
-    if user_id:
-        exibir_insights_dashboard(user_id)
-    else:
-        st.warning("⚠️ Usuário não encontrado para exibir insights")
-except Exception as e:
-    st.warning(f"⚠️ Erro ao carregar insights: {str(e)}")
+# Insights de IA Integrados
+def mostrar_insights_ia(usuario: str):
+    """Exibe insights e status de IA integrados"""
+    try:
+        # Obter ID do usuário
+        db = DatabaseManager()
+        usuario_repo = UsuarioRepository(db)
+        user_data = usuario_repo.obter_usuario_por_username(usuario)
+        
+        if not user_data:
+            st.error(f"DEBUG: Usuário '{usuario}' não encontrado no banco de dados")
+            return
+        
+        user_id = user_data.get('id')
+        if not user_id:
+            st.error(f"DEBUG: user_id não encontrado para usuário '{usuario}', user_data: {user_data}")
+            return
+            
+        st.info(f"DEBUG: Processando insights para user_id={user_id}, usuario='{usuario}'")
+        
+        # Importar serviços de IA
+        from services.ai_assistant_service import FinancialAIAssistant
+        from services.ai_categorization_service import AICategorization
+        
+        ai_assistant = FinancialAIAssistant()
+        ai_categorization = AICategorization()
+        
+        # Container para insights de IA
+        with st.expander("🤖 **Insights de IA** - Inteligência Artificial Financeira", expanded=True):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 🎯 Insights Rápidos")
+                
+                # Obter insights rápidos
+                insights = ai_assistant.get_quick_insights(user_id)
+                
+                if 'erro' not in insights:
+                    # Saldo mensal
+                    if 'saldo_mensal' in insights:
+                        saldo = insights['saldo_mensal']
+                        if saldo > 0:
+                            st.success(f"💰 Sobra mensal: R$ {saldo:,.2f}")
+                        elif saldo < 0:
+                            st.error(f"⚠️ Déficit mensal: R$ {abs(saldo):,.2f}")
+                        else:
+                            st.info("⚖️ Receitas e despesas equilibradas")
+                    
+                    # Top categoria
+                    if 'top_categoria' in insights:
+                        cat = insights['top_categoria']
+                        st.info(f"📊 Maior gasto: {cat['nome']} (R$ {cat['valor']:,.2f})")
+                    
+                    # Alertas
+                    if insights.get('alertas'):
+                        st.warning("⚠️ " + insights['alertas'][0])
+                        
+                    # Mostrar erros específicos para debug
+                    if 'erro_saldo' in insights:
+                        st.error(f"Erro no saldo: {insights['erro_saldo']}")
+                    if 'erro_alertas' in insights:
+                        st.error(f"Erro nos alertas: {insights['erro_alertas']}")
+                    if 'erro_categoria' in insights:
+                        st.error(f"Erro na categoria: {insights['erro_categoria']}")
+                    if 'erro_sugestoes' in insights:
+                        st.error(f"Erro nas sugestões: {insights['erro_sugestoes']}")
+                else:
+                    st.warning(f"⚠️ Erro geral nos insights: {insights.get('erro', 'Erro desconhecido')}")
+            
+            with col2:
+                st.markdown("#### 🔬 Status de Categorização IA")
+                
+                # Obter estatísticas de categorização
+                stats = ai_categorization.obter_estatisticas_precisao(user_id)
+                
+                if stats:
+                    total = stats.get('total_transacoes', 0)
+                    categorizadas = stats.get('transacoes_categorizadas', 0)
+                    precisao = stats.get('precisao_geral', 0)
+                    
+                    if total > 0:
+                        progress = categorizadas / total if total > 0 else 0
+                        st.progress(progress, text=f"Categorização: {categorizadas}/{total}")
+                        
+                        if precisao > 80:
+                            st.success(f"🎯 Alta precisão: {precisao:.1f}%")
+                        elif precisao > 60:
+                            st.info(f"📈 Precisão moderada: {precisao:.1f}%")
+                        else:
+                            st.warning(f"⚠️ Precisão baixa: {precisao:.1f}%")
+                    else:
+                        st.info("📝 Aguardando mais dados para análise")
+                else:
+                    st.info("🤖 Sistema de IA sendo inicializado...")
+                
+                # Botão para ir ao assistente
+                if st.button("💬 Conversar com IA", type="secondary"):
+                    st.switch_page("pages/Assistente_IA.py")
+    
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar insights de IA: {str(e)}")
+
+mostrar_insights_ia(usuario)
 
 st.markdown("---")
 
@@ -529,7 +624,7 @@ with st.expander("📊 Gráficos por Categoria", expanded=False):
     with col1:
         # Gráfico de gastos por categoria
         if not df.empty and 'categoria' in df.columns:
-            df_despesas = df[df['valor'] < 0].copy()
+            df_despesas = df.loc[df['valor'] < 0].copy()
             if not df_despesas.empty:
                 gastos_categoria = df_despesas.groupby('categoria')['valor'].sum().abs().sort_values(ascending=False)
                 
@@ -543,7 +638,7 @@ with st.expander("📊 Gráficos por Categoria", expanded=False):
     with col2:
         # Gráfico de receitas por categoria
         if not df.empty and 'categoria' in df.columns:
-            df_receitas = df[df['valor'] > 0].copy()
+            df_receitas = df.loc[df['valor'] > 0].copy()
             if not df_receitas.empty:
                 receitas_categoria = df_receitas.groupby('categoria')['valor'].sum().sort_values(ascending=False)
                 
@@ -563,8 +658,8 @@ with st.expander("📈 Análise Temporal", expanded=False):
             df_temp['Mes'] = df_temp['data'].dt.to_period('M')
             
             # Separar receitas e despesas
-            df_temp_receitas = df_temp[df_temp['valor'] > 0].copy()
-            df_temp_despesas = df_temp[df_temp['valor'] < 0].copy()
+            df_temp_receitas = df_temp.loc[df_temp['valor'] > 0].copy()
+            df_temp_despesas = df_temp.loc[df_temp['valor'] < 0].copy()
             
             col1, col2 = st.columns(2)
             
@@ -615,8 +710,8 @@ with st.expander("📊 Transações por Categoria", expanded=False):
             
             # Mostrar resumo
             total_transacoes = len(df)
-            receitas_total = df[df['valor'] > 0]['valor'].sum()
-            despesas_total = abs(df[df['valor'] < 0]['valor'].sum())
+            receitas_total = df.loc[df['valor'] > 0, 'valor'].sum()
+            despesas_total = abs(df.loc[df['valor'] < 0, 'valor'].sum())
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -633,7 +728,7 @@ with st.expander("📊 Transações por Categoria", expanded=False):
             df_display_todas = formatar_df_monetario(df_display_todas, col_valor="valor")
             
             st.dataframe(
-                df_display_todas[['data', 'descricao', 'ValorFormatado', 'categoria', 'origem']].rename(
+                df_display_todas.loc[:, ['data', 'descricao', 'ValorFormatado', 'categoria', 'origem']].rename(
                     columns={
                         'data': 'Data',
                         'descricao': 'Descrição', 
@@ -653,7 +748,7 @@ with st.expander("📊 Transações por Categoria", expanded=False):
             st.markdown("**Receitas no período**")
             
             # Filtrar apenas receitas (valores positivos)
-            df_receitas = df[df['valor'] > 0]
+            df_receitas = df.loc[df['valor'] > 0]
             
             if not df_receitas.empty:
                 # Mostrar resumo das receitas
@@ -673,7 +768,7 @@ with st.expander("📊 Transações por Categoria", expanded=False):
                 df_display_receitas = formatar_df_monetario(df_display_receitas, col_valor="valor")
                 
                 st.dataframe(
-                    df_display_receitas[['data', 'descricao', 'ValorFormatado', 'categoria', 'origem']].rename(
+                    df_display_receitas.loc[:, ['data', 'descricao', 'ValorFormatado', 'categoria', 'origem']].rename(
                         columns={
                             'data': 'Data',
                             'descricao': 'Descrição', 
@@ -695,7 +790,7 @@ with st.expander("📊 Transações por Categoria", expanded=False):
             st.markdown("**Despesas no período**")
             
             # Filtrar apenas despesas (valores negativos)
-            df_despesas = df[df['valor'] < 0]
+            df_despesas = df.loc[df['valor'] < 0]
             
             if not df_despesas.empty:
                 # Mostrar resumo das despesas
@@ -715,7 +810,7 @@ with st.expander("📊 Transações por Categoria", expanded=False):
                 df_display_despesas = formatar_df_monetario(df_display_despesas, col_valor="valor")
                 
                 st.dataframe(
-                    df_display_despesas[['data', 'descricao', 'ValorFormatado', 'categoria', 'origem']].rename(
+                    df_display_despesas.loc[:, ['data', 'descricao', 'ValorFormatado', 'categoria', 'origem']].rename(
                         columns={
                             'data': 'Data',
                             'descricao': 'Descrição', 
@@ -763,7 +858,7 @@ with st.expander("📊 Transações por Categoria", expanded=False):
                     df_display_cat = formatar_df_monetario(df_display_cat, col_valor="valor")
                     
                     st.dataframe(
-                        df_display_cat[['data', 'descricao', 'ValorFormatado', 'origem']].rename(
+                        df_display_cat.loc[:, ['data', 'descricao', 'ValorFormatado', 'origem']].rename(
                             columns={
                                 'data': 'Data',
                                 'descricao': 'Descrição',

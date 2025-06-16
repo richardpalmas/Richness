@@ -79,12 +79,11 @@ class InsightsServiceV2:
                 'dias_restantes': 0,
                 'media_diaria_disponivel': 0.0,
                 'status': 'sem_dados',
-                'mes_ano': f"{mes:02d}/{ano}"
-            }
+                'mes_ano': f"{mes:02d}/{ano}"            }
         
         # Calcular totais
-        receitas = df_transacoes[df_transacoes['valor'] > 0]['valor'].sum()
-        gastos = abs(df_transacoes[df_transacoes['valor'] < 0]['valor'].sum())
+        receitas = df_transacoes.loc[df_transacoes['valor'] > 0, 'valor'].sum()
+        gastos = abs(df_transacoes.loc[df_transacoes['valor'] < 0, 'valor'].sum())
         valor_restante = receitas - gastos
         
         # Calcular percentual gasto
@@ -137,7 +136,7 @@ class InsightsServiceV2:
             return {'status': 'sem_dados'}
         
         # Filtrar apenas gastos
-        df_gastos = df_transacoes[df_transacoes['valor'] < 0].copy()
+        df_gastos = df_transacoes.loc[df_transacoes['valor'] < 0].copy()
         if df_gastos.empty:
             return {'status': 'sem_dados'}
             
