@@ -35,86 +35,95 @@ def obter_user_id_do_usuario():
 
 def render_chat_interface(user_id: int):
     """Renderiza a interface de chat"""
-    
-    st.subheader("💬 Conversa com IA")
-    
-    # Inicializar histórico de chat
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
-        
-        # Mensagem de boas-vindas
-        welcome_msg = st.session_state.ai_assistant._get_generic_help_response()
-        st.session_state.chat_history.append({
-            'type': 'assistant',
-            'message': welcome_msg,
-            'timestamp': datetime.now()
-        })
-    
-    # Container do chat
-    chat_container = st.container()
-    
-    # Exibir histórico de chat
-    with chat_container:
-        for entry in st.session_state.chat_history:
-            if entry['type'] == 'user':
-                st.markdown(f"""
-                <div style='text-align: right; margin: 1rem 0;'>
-                    <div style='background: #667eea; color: white; padding: 0.8rem; border-radius: 15px; display: inline-block; max-width: 80%;'>
-                        {entry['message']}
-                    </div>
-                    <div style='font-size: 0.8em; color: #666; margin-top: 0.2rem;'>
-                        Você • {entry['timestamp'].strftime('%H:%M')}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div style='text-align: left; margin: 1rem 0;'>
-                    <div style='background: #f1f3f4; color: #333; padding: 0.8rem; border-radius: 15px; display: inline-block; max-width: 80%;'>
-                        {entry['message']}
-                    </div>
-                    <div style='font-size: 0.8em; color: #666; margin-top: 0.2rem;'>
-                        🤖 Richness AI • {entry['timestamp'].strftime('%H:%M')}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-    
-    # Input para nova mensagem
-    st.markdown("---")
-    user_input = st.text_input(
-        "Digite sua pergunta:", 
-        placeholder="Ex: Qual meu saldo atual?",
-        key="user_message_input"
-    )
-    
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        send_button = st.button("📤 Enviar", type="primary")
-    with col2:
-        if st.button("🗑️ Limpar Chat"):
+    try:
+        st.subheader("🤖 Conversa com IA")
+        # Inicializar histórico de chat
+        if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
+            
+            # Mensagem de boas-vindas personalizada
+            personalidade = st.session_state.get('ai_personality', 'clara')
+            welcome_msg = st.session_state.ai_assistant._get_generic_help_response()
+            welcome_msg = st.session_state.ai_assistant._apply_personality_style(welcome_msg, personalidade)
+            
+            st.session_state.chat_history.append({
+                'type': 'assistant',
+                'message': welcome_msg,
+                'timestamp': datetime.now()
+            })
+        
+        # Container do chat
+        chat_container = st.container()
+        
+        # Exibir histórico de chat
+        with chat_container:
+            for entry in st.session_state.chat_history:
+                if entry['type'] == 'user':
+                    st.markdown(f"""
+                    <div style='text-align: right; margin: 1rem 0;'>
+                        <div style='background: #667eea; color: white; padding: 0.8rem; border-radius: 15px; display: inline-block; max-width: 80%;'>
+                            {entry['message']}
+                        </div>
+                        <div style='font-size: 0.8em; color: #666; margin-top: 0.2rem;'>
+                            Você • {entry['timestamp'].strftime('%H:%M')}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div style='text-align: left; margin: 1rem 0;'>
+                        <div style='background: #f1f3f4; color: #333; padding: 0.8rem; border-radius: 15px; display: inline-block; max-width: 80%;'>
+                            {entry['message']}
+                        </div>
+                        <div style='font-size: 0.8em; color: #666; margin-top: 0.2rem;'>
+                            🤖 Richness AI • {entry['timestamp'].strftime('%H:%M')}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        # Input para nova mensagem
+        st.markdown("---")
+        user_input = st.text_input(
+            "Digite sua pergunta:", 
+            placeholder="Ex: Qual meu saldo atual?",
+            key="user_message_input"
+        )
+        
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            send_button = st.button("💬 Enviar", type="primary")
+        with col2:
+            if st.button("🗑️ Limpar Chat"):
+                st.session_state.chat_history = []
+                st.rerun()
+        
+        # Processar mensagem quando enviada
+        if send_button and user_input.strip():
+            process_user_message(user_id, user_input.strip())
             st.rerun()
-    
-    # Processar mensagem quando enviada
-    if send_button and user_input.strip():
-        process_user_message(user_id, user_input.strip())
-        st.rerun()
+    except Exception as e:
+        st.error(f"Erro na interface de chat: {str(e)}")
 
 
 def process_user_message(user_id: int, message: str):
     """Processa mensagem do usuário e gera resposta"""
-    
-    # Adicionar mensagem do usuário ao histórico
-    st.session_state.chat_history.append({
-        'type': 'user',
-        'message': message,
-        'timestamp': datetime.now()
-    })
-    
-    # Gerar resposta da IA
     try:
+        # Adicionar mensagem do usuário ao histórico
+        st.session_state.chat_history.append({
+            'type': 'user',
+            'message': message,
+            'timestamp': datetime.now()
+        })
+        
+        # Gerar resposta da IA
         with st.spinner("🤖 Analisando..."):
-            response_data = st.session_state.ai_assistant.process_message(user_id, message)
+            # Obter personalidade selecionada
+            personalidade = st.session_state.get('ai_personality', 'clara')
+            
+            # Processar mensagem com personalidade
+            response_data = st.session_state.ai_assistant.process_message_with_personality(
+                user_id, message, personalidade
+            )
             response = response_data['response']
         
         # Adicionar resposta da IA ao histórico
@@ -125,7 +134,7 @@ def process_user_message(user_id: int, message: str):
         })
         
     except Exception as e:
-        error_msg = f"❌ Erro ao processar sua pergunta: {str(e)}"
+        error_msg = f"⚠️ Erro ao processar sua pergunta: {str(e)}"
         st.session_state.chat_history.append({
             'type': 'assistant',
             'message': error_msg,
@@ -135,73 +144,160 @@ def process_user_message(user_id: int, message: str):
 
 def render_insights_sidebar(user_id: int):
     """Renderiza sidebar com insights rápidos"""
-    
-    st.markdown("### 📊 Insights Rápidos")
-    
     try:
-        insights = st.session_state.ai_assistant.get_quick_insights(user_id)
+        # CSS para cards visuais melhorados
+        st.markdown("""
+        <style>
+        .insight-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 10px 0;
+            color: white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .insight-card-positive {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 10px 0;
+            color: white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .insight-card-negative {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 10px 0;
+            color: white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .insight-value {
+            font-size: 28px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .insight-label {
+            font-size: 16px;
+            margin-bottom: 5px;
+            opacity: 0.9;
+        }
+        .alert-box {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            color: #856404;
+        }
+        .suggestion-box {
+            background: linear-gradient(135deg, #d1ecf1 0%, #e8f4f8 100%);
+            border: 1px solid #bee5eb;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            color: #0c5460;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            line-height: 1.5;
+        }
+        </style>
+        """, unsafe_allow_html=True)
         
-        if 'erro' in insights:
-            st.warning(f"⚠️ Erro nos insights: {insights['erro']}")
-            # Mostrar erros específicos para debug
-            if 'erro_saldo' in insights:
-                st.error(f"Saldo: {insights['erro_saldo']}")
-            if 'erro_alertas' in insights:
-                st.error(f"Alertas: {insights['erro_alertas']}")
-            if 'erro_categoria' in insights:
-                st.error(f"Categoria: {insights['erro_categoria']}")
-            if 'erro_sugestoes' in insights:
-                st.error(f"Sugestões: {insights['erro_sugestoes']}")
-            return
+        st.markdown("### 📊 Insights Rápidos")
         
-        # Saldo mensal
-        if 'saldo_mensal' in insights:
-            saldo = insights['saldo_mensal']
-            color = "green" if saldo >= 0 else "red"
-            st.markdown(f"""
-            <div class="stats-card">
-                <h4 style="color: {color};">💰 Saldo Mensal</h4>
-                <h3 style="color: {color};">R$ {saldo:,.2f}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Top categoria
-        if 'top_categoria' in insights:
-            top_cat = insights['top_categoria']
-            st.markdown(f"""
-            <div class="stats-card">
-                <h4>🏆 Maior Gasto</h4>
-                <p><strong>{top_cat['nome']}</strong></p>
-                <h4 style="color: #ff6b6b;">R$ {top_cat['valor']:,.2f}</h4>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Alertas
-        if insights.get('alertas'):
-            st.markdown("### ⚠️ Alertas")
-            for alerta in insights['alertas']:
-                st.warning(alerta)
-        
-        # Sugestões
-        if insights.get('sugestoes'):
-            st.markdown("### 💡 Sugestões")
-            for sugestao in insights['sugestoes']:
-                st.info(sugestao)
-        
-        # Estatísticas de IA
-        st.markdown("---")
-        st.markdown("### 🤖 Estatísticas de IA")
-        
-        categorization_stats = get_ai_stats(user_id)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("🎯 Precisão", f"{categorization_stats.get('precisao', 0):.1f}%")
-        with col2:
-            st.metric("📈 Aprendizado", f"{categorization_stats.get('aprendizado', 0):.1f}%")
-        
+        try:
+            insights = st.session_state.ai_assistant.get_quick_insights(user_id)
+            
+            if 'erro' in insights:
+                st.error("⚠️ Não foi possível carregar os insights")
+                return
+            
+            # Saldo mensal com card visual melhorado
+            if 'saldo_mensal' in insights:
+                saldo = insights['saldo_mensal']
+                card_class = "insight-card-positive" if saldo >= 0 else "insight-card-negative"
+                icon = "💰" if saldo >= 0 else "⚠️"
+                status = "Sobra Mensal" if saldo >= 0 else "Déficit Mensal"
+                
+                st.markdown(f"""
+                <div class="{card_class}">
+                    <div class="insight-label">{icon} {status}</div>
+                    <div class="insight-value">R$ {abs(saldo):,.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Top categoria com visual melhorado
+            if 'top_categoria' in insights:
+                top_cat = insights['top_categoria']
+                st.markdown(f"""
+                <div class="insight-card">
+                    <div class="insight-label">📈 Maior Gasto</div>
+                    <div style="font-size: 18px; margin: 10px 0; font-weight: bold;">{top_cat['nome']}</div>
+                    <div class="insight-value">R$ {top_cat['valor']:,.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            # Alertas com estilo melhorado
+            if insights.get('alertas'):
+                st.markdown("#### ⚠️ Alertas Importantes")
+                for alerta in insights['alertas'][:2]:  # Limitar a 2 alertas
+                    st.markdown(f"""
+                    <div class="alert-box">
+                        <strong>⚠️</strong> {alerta}
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Sugestões com estilo melhorado
+            if insights.get('sugestoes'):
+                st.markdown("#### 💡 Dicas Inteligentes")
+                for sugestao in insights['sugestoes'][:2]:  # Limitar a 2 sugestões
+                    titulo, descricao, economia, dificuldade = formatar_dica_inteligente(sugestao)
+                    
+                    # Ícone baseado na dificuldade
+                    dificuldade_icon = {
+                        'facil': '🟢',
+                        'media': '🟡', 
+                        'dificil': '🔴'
+                    }.get(dificuldade, '🟡')
+                    
+                    # Formatar economia
+                    economia_display = ""
+                    if economia > 0:
+                        economia_display = f"<br><small><strong>💰 Economia potencial:</strong> R$ {economia:,.2f}</small>"
+                    
+                    st.markdown(f"""
+                    <div class="suggestion-box">
+                        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                            <strong>💡 {titulo}</strong>
+                            <span style="margin-left: auto;">{dificuldade_icon}</span>
+                        </div>
+                        <div style="margin-bottom: 5px;">{descricao}</div>
+                        {economia_display}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+            # Separador visual
+            st.markdown("---")
+            
+            # Estatísticas de IA com métricas visuais
+            st.markdown("#### 🤖 Estatísticas de IA")
+            
+            categorization_stats = get_ai_stats(user_id)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("🎯 Precisão", f"{categorization_stats.get('precisao', 0):.1f}%")
+            with col2:
+                st.metric("📈 Aprendizado", f"{categorization_stats.get('aprendizado', 0):.1f}%")
+            
+        except Exception as e:
+            st.error(f"Erro ao carregar insights: {str(e)}")
+            
     except Exception as e:
-        st.error(f"Erro ao carregar insights: {str(e)}")
+        st.error(f"Erro ao renderizar insights: {str(e)}")
 
 
 def get_ai_stats(user_id: int) -> dict:
@@ -218,106 +314,114 @@ def get_ai_stats(user_id: int) -> dict:
         return {'precisao': 0, 'aprendizado': 0}
 
 
-# Configuração da página
-st.set_page_config(
-    page_title="🤖 Assistente IA", 
-    page_icon="🤖",
-    layout="wide"
-)
+def formatar_dica_inteligente(sugestao) -> tuple:
+    """Formata uma dica inteligente para exibição amigável"""
+    if isinstance(sugestao, dict):
+        titulo = sugestao.get('titulo', 'Dica Financeira')
+        descricao = sugestao.get('descricao', '')
+        economia = sugestao.get('economia_potencial', 0)
+        dificuldade = sugestao.get('dificuldade', 'media')
+        
+        # Limpar e formatar a descrição
+        if 'R$' not in descricao and economia > 0:
+            descricao = descricao.replace(f"R$ {economia:,.2f}", f"R$ {economia:,.2f}")
+        
+        return titulo, descricao, economia, dificuldade
+    else:
+        # Para strings simples
+        return str(sugestao), "", 0, "media"
 
-# Verificar autenticação
-verificar_autenticacao()
 
-# Obter user_id
-user_id = obter_user_id_do_usuario()
-if not user_id:
-    st.error("❌ Erro ao identificar o usuário. Faça login novamente.")
-    st.stop()
+def render_personality_selector():
+    """Renderiza o seletor de personalidade da IA"""
+    try:
+        # Definir opções de personalidade
+        personalidade_opcoes = {
+            "clara": "🌟 Mais clara, acolhedora e engraçada",
+            "tecnica": "📊 Mais técnica e formal", 
+            "durona": "💪 Mais durona e informal"
+        }
+        
+        st.markdown("### 🎭 Personalidade da IA")
+        
+        # Obter personalidade atual
+        personalidade_anterior = st.session_state.get('ai_personality', 'clara')
+        
+        personalidade_selecionada = st.selectbox(
+            "Como você gostaria que a IA se comunique?",
+            options=list(personalidade_opcoes.keys()),
+            format_func=lambda x: personalidade_opcoes[x],
+            index=list(personalidade_opcoes.keys()).index(personalidade_anterior),
+            key="personality_selector",
+            help="Escolha o estilo de comunicação que você prefere para suas análises e respostas"
+        )
+        
+        # Verificar se houve mudança na personalidade
+        if personalidade_selecionada != personalidade_anterior:
+            st.session_state['ai_personality'] = personalidade_selecionada
+            # Funcionalidade de atualização movida para inline
+            st.rerun()
+        
+        # Armazenar personalidade no session_state
+        st.session_state['ai_personality'] = personalidade_selecionada
+        
+        # Mostrar descrição da personalidade selecionada
+        personality_descriptions = {
+            "clara": "💬 Comunicação amigável e descontraída com uso de emojis",
+            "tecnica": "📊 Linguagem técnica e precisa com terminologia financeira",
+            "durona": "🎯 Comunicação direta e sem rodeios, mais informal"
+        }
+        
+        st.markdown(f"""
+        <div style="background: #00008B; padding: 10px; border-radius: 8px; margin: 10px 0;">
+            <small>{personality_descriptions[personalidade_selecionada]}</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+    except Exception as e:
+        st.error(f"Erro ao renderizar seletor de personalidade: {str(e)}")
 
-# CSS customizado para melhorar a aparência do chat
-st.markdown("""
-<style>
-.chat-header {
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    padding: 1rem;
-    border-radius: 10px;
-    color: white;
-    text-align: center;
-    margin-bottom: 1rem;
-}
 
-.insight-card {
-    background: #f8f9fa;
-    padding: 1rem;
-    border-radius: 8px;
-    border-left: 4px solid #667eea;
-    margin-bottom: 0.5rem;
-}
+# Página principal
+def main():
+    try:
+        # Verificar autenticação
+        if not verificar_autenticacao():
+            st.warning("🔒 Faça login para acessar essa página")
+            return
+        
+        # Inicializar FinancialAIAssistant se ainda não existir
+        if 'ai_assistant' not in st.session_state:
+            st.session_state.ai_assistant = FinancialAIAssistant()
+        
+        # Obter ID do usuário
+        user_id = obter_user_id_do_usuario()
+        if not user_id:
+            st.error("❌ Não foi possível obter os dados do usuário")
+            return
+        
+        # Configurar layout da página
+        st.title("🤖 Assistente IA")
+        
+        # Dividir em duas colunas principais
+        col1, col2 = st.columns([2.5, 1])
+        
+        with col1:
+            # Interface de chat principal
+            render_chat_interface(user_id)
+            
+        with col2:
+            # Seletor de personalidade no sidebar
+            render_personality_selector()
+            
+            # Insights no sidebar
+            render_insights_sidebar(user_id)
+            
+    except Exception as e:
+        st.error(f"Erro ao carregar a página: {str(e)}")
+        st.error("Por favor, recarregue a página ou contate o suporte se o problema persistir.")
 
-.suggestion-button {
-    background: #667eea;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    margin: 0.2rem;
-    cursor: pointer;
-    transition: all 0.3s;
-}
 
-.suggestion-button:hover {
-    background: #764ba2;
-    transform: translateY(-2px);
-}
-
-.stats-card {
-    background: white;
-    padding: 1rem;
-    border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    text-align: center;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# Header principal
-st.markdown("""
-<div class="chat-header">
-    <h1>🤖 Richness AI - Seu Consultor Financeiro Pessoal</h1>
-    <p>Conversa inteligente sobre suas finanças • Análises em tempo real • Sugestões personalizadas</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Inicializar assistente
-if 'ai_assistant' not in st.session_state:
-    st.session_state.ai_assistant = FinancialAIAssistant()
-
-# Inicializar serviço de categorização
-if 'ai_categorization' not in st.session_state:
-    st.session_state.ai_categorization = AICategorization()
-
-# Layout em colunas
-col_chat, col_sidebar = st.columns([3, 1])
-
-with col_chat:
-    # Interface principal do chat
-    render_chat_interface(user_id)
-    
-    # Seção de perguntas sugeridas
-    st.markdown("---")
-    st.subheader("💭 Perguntas Sugeridas")
-    
-    suggestions = st.session_state.ai_assistant.get_conversation_starters()
-    
-    # Exibir sugestões em grid
-    cols = st.columns(2)
-    for i, suggestion in enumerate(suggestions):
-        with cols[i % 2]:
-            if st.button(suggestion, key=f"suggestion_{i}"):
-                # Processar sugestão como uma mensagem
-                process_user_message(user_id, suggestion)
-                st.rerun()
-
-with col_sidebar:
-    # Sidebar com insights rápidos
-    render_insights_sidebar(user_id)
+if __name__ == "__main__":
+    main()

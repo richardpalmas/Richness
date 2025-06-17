@@ -191,24 +191,36 @@ class InsightsServiceV2:
     def sugerir_otimizacoes(self, user_id: int) -> List[Dict[str, Any]]:
         """Sugere otimizações baseadas no padrão de gastos"""
         sugestoes = []
-        
-        # Analisar últimos 3 meses
+          # Analisar últimos 3 meses
         analise = self.analisar_gastos_por_categoria(user_id, 3)
-        if analise.get('status') != 'ok':
+        if analise.get('status') != 'ok' or 'resumo_categorias' not in analise:
             return sugestoes
-        
-        # Sugestão 1: Maior categoria de gasto
-        categorias = analise['resumo_categorias']
-        if categorias:
-            maior_categoria = max(categorias.items(), key=lambda x: x[1]['sum'])
-            categoria_nome, dados = maior_categoria
             
-            if dados['percentual'] > 30:
+        # Converter o resumo para um formato mais simples
+        gastos_simplificados = {}
+        for categoria, dados in analise['resumo_categorias'].items():
+            if isinstance(dados, dict) and 'sum' in dados:
+                gastos_simplificados[categoria] = float(dados['sum'])
+            
+        analise['gastos_por_categoria'] = gastos_simplificados
+          # Sugestão 1: Maior categoria de gasto
+        categorias = gastos_simplificados
+        if categorias:
+            # Usar os dados já convertidos para float
+            maior_categoria = max(categorias.items(), key=lambda x: abs(float(x[1])))
+            categoria_nome, valor = maior_categoria
+            
+            # Calcular o percentual em relação ao total
+            total_gastos = sum(abs(float(v)) for v in categorias.values())
+            percentual = (abs(float(valor)) / total_gastos * 100) if total_gastos > 0 else 0
+            
+            if percentual > 30:
+                economia_potencial = abs(float(valor)) * 0.1  # 10% de economia
                 sugestoes.append({
                     'tipo': 'reduzir_categoria_principal',
                     'titulo': f'Otimizar gastos com {categoria_nome}',
-                    'economia_potencial': dados['sum'] * 0.1,  # 10% de economia
-                    'descricao': f"{categoria_nome} representa {dados['percentual']:.1f}% dos seus gastos. Uma redução de 10% economizaria {formatar_valor_monetario(dados['sum'] * 0.1)}",
+                    'economia_potencial': economia_potencial,
+                    'descricao': f"{categoria_nome} representa {percentual:.1f}% dos seus gastos. Uma redução de 10% economizaria {formatar_valor_monetario(economia_potencial)}",
                     'dificuldade': 'media'
                 })
         

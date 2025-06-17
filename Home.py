@@ -213,7 +213,7 @@ backend_sistema = init_backend_sistema()
 # Verificar autenticação
 verificar_autenticacao()
 
-# Limpar caches se necessário (debug)
+# Limpar caches se necessário
 if st.sidebar.button("🔄 Limpar Cache", help="Limpa cache do sistema"):
     st.cache_data.clear()
     st.cache_resource.clear()
@@ -521,15 +521,13 @@ def mostrar_insights_ia(usuario: str):
         user_data = usuario_repo.obter_usuario_por_username(usuario)
         
         if not user_data:
-            st.error(f"DEBUG: Usuário '{usuario}' não encontrado no banco de dados")
+            st.error("Usuário não encontrado")
             return
         
         user_id = user_data.get('id')
         if not user_id:
-            st.error(f"DEBUG: user_id não encontrado para usuário '{usuario}', user_data: {user_data}")
+            st.error("Erro ao identificar o usuário")
             return
-            
-        st.info(f"DEBUG: Processando insights para user_id={user_id}, usuario='{usuario}'")
         
         # Importar serviços de IA
         from services.ai_assistant_service import FinancialAIAssistant
@@ -539,6 +537,61 @@ def mostrar_insights_ia(usuario: str):
         ai_categorization = AICategorization()
         
         # Container para insights de IA
+        # CSS para cards visuais melhorados
+        st.markdown("""
+        <style>
+        .home-insight-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 8px 0;
+            color: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .home-insight-positive {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 8px 0;
+            color: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .home-insight-negative {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 8px 0;
+            color: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .home-insight-neutral {
+            background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 8px 0;
+            color: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .home-insight-value {
+            font-size: 20px;
+            font-weight: bold;
+            margin: 8px 0;
+        }
+        .home-alert-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px;
+            border-radius: 5px;
+            margin: 8px 0;
+            color: #856404;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
         with st.expander("🤖 **Insights de IA** - Inteligência Artificial Financeira", expanded=True):
             col1, col2 = st.columns(2)
             
@@ -549,36 +602,51 @@ def mostrar_insights_ia(usuario: str):
                 insights = ai_assistant.get_quick_insights(user_id)
                 
                 if 'erro' not in insights:
-                    # Saldo mensal
+                    # Saldo mensal com visual melhorado
                     if 'saldo_mensal' in insights:
                         saldo = insights['saldo_mensal']
                         if saldo > 0:
-                            st.success(f"💰 Sobra mensal: R$ {saldo:,.2f}")
+                            st.markdown(f"""
+                            <div class="home-insight-positive">
+                                <div>💰 Sobra Mensal</div>
+                                <div class="home-insight-value">R$ {saldo:,.2f}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
                         elif saldo < 0:
-                            st.error(f"⚠️ Déficit mensal: R$ {abs(saldo):,.2f}")
+                            st.markdown(f"""
+                            <div class="home-insight-negative">
+                                <div>⚠️ Déficit Mensal</div>
+                                <div class="home-insight-value">R$ {abs(saldo):,.2f}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
                         else:
-                            st.info("⚖️ Receitas e despesas equilibradas")
+                            st.markdown("""
+                            <div class="home-insight-neutral">
+                                <div>⚖️ Equilíbrio Financeiro</div>
+                                <div class="home-insight-value">R$ 0,00</div>
+                            </div>
+                            """, unsafe_allow_html=True)
                     
-                    # Top categoria
+                    # Top categoria com visual melhorado
                     if 'top_categoria' in insights:
                         cat = insights['top_categoria']
-                        st.info(f"📊 Maior gasto: {cat['nome']} (R$ {cat['valor']:,.2f})")
+                        st.markdown(f"""
+                        <div class="home-insight-card">
+                            <div>📊 Maior Gasto</div>
+                            <div style="font-size: 16px; margin: 5px 0;">{cat['nome']}</div>
+                            <div class="home-insight-value">R$ {cat['valor']:,.2f}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
                     
-                    # Alertas
+                    # Alertas com visual melhorado
                     if insights.get('alertas'):
-                        st.warning("⚠️ " + insights['alertas'][0])
-                        
-                    # Mostrar erros específicos para debug
-                    if 'erro_saldo' in insights:
-                        st.error(f"Erro no saldo: {insights['erro_saldo']}")
-                    if 'erro_alertas' in insights:
-                        st.error(f"Erro nos alertas: {insights['erro_alertas']}")
-                    if 'erro_categoria' in insights:
-                        st.error(f"Erro na categoria: {insights['erro_categoria']}")
-                    if 'erro_sugestoes' in insights:
-                        st.error(f"Erro nas sugestões: {insights['erro_sugestoes']}")
+                        st.markdown(f"""
+                        <div class="home-alert-box">
+                            <strong>⚠️ Alerta:</strong> {insights['alertas'][0]}
+                        </div>
+                        """, unsafe_allow_html=True)
                 else:
-                    st.warning(f"⚠️ Erro geral nos insights: {insights.get('erro', 'Erro desconhecido')}")
+                    st.warning("⚠️ Não foi possível obter insights")
             
             with col2:
                 st.markdown("#### 🔬 Status de Categorização IA")

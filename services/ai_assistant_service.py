@@ -141,6 +141,90 @@ class FinancialAIAssistant:
             'timestamp': datetime.now().isoformat()
         }
     
+    def process_message_with_personality(self, user_id: int, message: str, personalidade: str = "clara") -> Dict[str, Any]:
+        """Processa mensagem do usuário considerando a personalidade selecionada"""
+        
+        # Analisar intenção
+        context = self.analyze_intent(message)
+        
+        # Gerar resposta baseada na intenção e personalidade
+        response = self._generate_response_with_personality(user_id, context, message, personalidade)
+        
+        return {
+            'response': response,
+            'context': context,
+            'personalidade': personalidade,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    def _get_personality_config(self, personalidade: str) -> Dict[str, str]:
+        """Obtém configurações de personalidade"""
+        personalidade_configs = {
+            "clara": {
+                "estilo": "acolhedora, clara e engraçada",
+                "tom": "amigável e descontraída",
+                "emojis": True,
+                "prefixo": "😊",
+                "sufixo": " 💫"
+            },
+            "tecnica": {
+                "estilo": "técnica e formal",
+                "tom": "profissional e objetiva",
+                "emojis": False,
+                "prefixo": "📊",
+                "sufixo": ""
+            },
+            "durona": {
+                "estilo": "durona e informal",
+                "tom": "direta e sem rodeios",
+                "emojis": True,
+                "prefixo": "💪",
+                "sufixo": " 🎯"
+            }
+        }
+        
+        return personalidade_configs.get(personalidade, personalidade_configs["clara"])
+    
+    def _apply_personality_style(self, message: str, personalidade: str) -> str:
+        """Aplica estilo da personalidade à mensagem"""
+        config = self._get_personality_config(personalidade)
+        
+        if personalidade == "clara":
+            # Estilo amigável com emojis e tom motivador
+            if "saldo" in message.lower() and "positivo" in message.lower():
+                message = message.replace("✅", "🎉").replace("Continue assim", "Você está arrasando! Continue assim")
+            elif "vermelho" in message.lower():
+                message = message.replace("⚠️", "🚨").replace("Atenção!", "Ops! Vamos dar uma olhada nisso")
+                
+        elif personalidade == "tecnica":
+            # Remover emojis excessivos e usar linguagem técnica
+            message = re.sub(r'[😊🎉💰✅⚠️🚨💪🎯]', '', message)
+            message = message.replace("Você está arrasando", "Performance financeira positiva")
+            message = message.replace("no vermelho", "em déficit orçamentário")
+            
+        elif personalidade == "durona":
+            # Tom mais direto e informal
+            message = message.replace("Considere revisar", "Precisa revisar urgente")
+            message = message.replace("Recomendo", "Você tem que")
+            message = message.replace("seria interessante", "é obrigatório")
+        
+        # Adicionar prefixo e sufixo da personalidade
+        if config["emojis"]:
+            return f"{config['prefixo']} {message}{config['sufixo']}"
+        else:
+            return message
+    
+    def _generate_response_with_personality(self, user_id: int, context: Dict[str, Any], original_message: str, personalidade: str) -> str:
+        """Gera resposta inteligente baseada no contexto e personalidade"""
+        
+        # Gerar resposta base
+        base_response = self._generate_response(user_id, context, original_message)
+        
+        # Aplicar estilo da personalidade
+        styled_response = self._apply_personality_style(base_response, personalidade)
+        
+        return styled_response
+    
     def _generate_response(self, user_id: int, context: Dict[str, Any], original_message: str) -> str:
         """Gera resposta inteligente baseada no contexto"""
         
@@ -200,24 +284,41 @@ class FinancialAIAssistant:
             # Analisar gastos por categoria
             analise_gastos = self.insights_service.analisar_gastos_por_categoria(user_id)
             
-            if not analise_gastos:
+            if not isinstance(analise_gastos, dict) or analise_gastos.get('status') != 'ok':
                 return "📊 Não encontrei dados de gastos para analisar."
             
             response = "💸 **Análise dos seus gastos:**\n\n"
             
-            # Mostrar top 3 categorias
-            top_categorias = sorted(analise_gastos.items(), key=lambda x: x[1], reverse=True)[:3]
-            
-            for i, (categoria, valor) in enumerate(top_categorias, 1):
-                response += f"{i}. **{categoria}**: R$ {valor:,.2f}\n"
+            try:
+                gastos_por_categoria = {}
+                for categoria, dados in analise_gastos.get('resumo_categorias', {}).items():
+                    if isinstance(dados, dict) and 'sum' in dados:
+                        valor = dados['sum']
+                        # Garantir que o valor é numérico
+                        if isinstance(valor, (int, float)):
+                            gastos_por_categoria[categoria] = float(valor)
+                
+                if not gastos_por_categoria:
+                    return "📊 Não encontrei dados de gastos para analisar."
+                
+                # Ordenar categorias por valor usando comparação segura
+                top_categorias = sorted(gastos_por_categoria.items(), key=lambda x: float(x[1]), reverse=True)[:3]
+                
+                for i, (categoria, valor) in enumerate(top_categorias, 1):
+                    response += f"{i}. **{categoria}**: R$ {abs(float(valor)):,.2f}\n"
+            except Exception as e:
+                return f"😊 ❌ Erro ao analisar categorias: Formato de dados inválido - {str(e)} 💫"
             
             # Categoria específica se mencionada
             categorias_mencionadas = context.get('categories', [])
-            if categorias_mencionadas:
+            if categorias_mencionadas and gastos_por_categoria:
                 for cat in categorias_mencionadas:
-                    if cat in analise_gastos:
-                        valor_cat = analise_gastos[cat]
-                        response += f"\n🎯 **{cat}**: R$ {valor_cat:,.2f}"
+                    # Procurar a categoria ignorando maiúsculas/minúsculas
+                    cat_lower = cat.lower()
+                    for categoria_existente, valor in gastos_por_categoria.items():
+                        if cat_lower in categoria_existente.lower():
+                            response += f"\n🎯 **{categoria_existente}**: R$ {abs(float(valor)):,.2f}"
+                            break
             
             return response
             
@@ -286,23 +387,44 @@ class FinancialAIAssistant:
         try:
             analise_gastos = self.insights_service.analisar_gastos_por_categoria(user_id)
             
-            if not analise_gastos:
+            if not isinstance(analise_gastos, dict) or analise_gastos.get('status') != 'ok':
                 return "📊 Não encontrei dados de categorias para analisar."
             
-            # Encontrar categoria que mais gasta
-            categoria_maior = max(analise_gastos.items(), key=lambda x: x[1])
-            
-            response = f"📊 **Análise por categoria:**\n\n"
-            response += f"🏆 **Categoria com maior gasto:** {categoria_maior[0]}\n"
-            response += f"💰 **Valor:** R$ {categoria_maior[1]:,.2f}\n\n"
-            
-            response += "**Distribuição completa:**\n"
-            for categoria, valor in sorted(analise_gastos.items(), key=lambda x: x[1], reverse=True):
-                porcentagem = (valor / sum(analise_gastos.values())) * 100
-                response += f"• {categoria}: R$ {valor:,.2f} ({porcentagem:.1f}%)\n"
-            
-            return response
-            
+            try:
+                # Extrair categorias e valores do formato correto
+                gastos_por_categoria = {}
+                for categoria, dados in analise_gastos.get('resumo_categorias', {}).items():
+                    if isinstance(dados, dict) and 'sum' in dados:
+                        valor = dados['sum']
+                        # Garantir que o valor é numérico
+                        if isinstance(valor, (int, float)):
+                            gastos_por_categoria[categoria] = float(abs(valor))
+                
+                if not gastos_por_categoria:
+                    return "📊 Não encontrei dados de categorias para analisar."
+                
+                # Encontrar categoria que mais gasta usando chave de comparação segura
+                categoria_maior = max(gastos_por_categoria.items(), key=lambda x: float(x[1]))
+                
+                total_gastos = sum(float(valor) for valor in gastos_por_categoria.values())
+                
+                response = f"📊 **Análise por categoria:**\n\n"
+                response += f"🏆 **Categoria com maior gasto:** {categoria_maior[0]}\n"
+                response += f"💰 **Valor:** R$ {float(categoria_maior[1]):,.2f}\n\n"
+                
+                response += "**Distribuição completa:**\n"
+                for categoria, valor in sorted(gastos_por_categoria.items(), key=lambda x: float(x[1]), reverse=True):
+                    if total_gastos > 0:
+                        porcentagem = (float(valor) / total_gastos) * 100
+                        response += f"• {categoria}: R$ {float(valor):,.2f} ({porcentagem:.1f}%)\n"
+                    else:
+                        response += f"• {categoria}: R$ {float(valor):,.2f}\n"
+                
+                return response
+                
+            except Exception as e:
+                return f"❌ Erro ao processar dados das categorias: {str(e)}"
+        
         except Exception as e:
             return f"❌ Erro ao analisar categorias: {str(e)}"
     
@@ -411,15 +533,23 @@ class FinancialAIAssistant:
                 if gastos_data and gastos_data.get('status') == 'ok':
                     resumo_categorias = gastos_data.get('resumo_categorias', {})
                     if resumo_categorias:
-                        # Encontrar categoria com maior soma
-                        top_categoria_nome = max(resumo_categorias.keys(), 
-                                               key=lambda x: resumo_categorias[x]['sum'])
-                        top_categoria_valor = resumo_categorias[top_categoria_nome]['sum']
+                        # Encontrar categoria com maior soma usando comparação segura
+                        categorias_validas = {}
+                        for categoria, dados in resumo_categorias.items():
+                            if isinstance(dados, dict) and 'sum' in dados:
+                                valor = dados['sum']
+                                if isinstance(valor, (int, float)):
+                                    categorias_validas[categoria] = float(valor)
                         
-                        insights['top_categoria'] = {
-                            'nome': top_categoria_nome,
-                            'valor': top_categoria_valor
-                        }
+                        if categorias_validas:
+                            top_categoria_nome = max(categorias_validas.keys(), 
+                                                   key=lambda x: categorias_validas[x])
+                            top_categoria_valor = categorias_validas[top_categoria_nome]
+                            
+                            insights['top_categoria'] = {
+                                'nome': top_categoria_nome,
+                                'valor': top_categoria_valor
+                            }
             except Exception as e:
                 insights['erro_categoria'] = str(e)
             
