@@ -149,6 +149,15 @@ def handle_upload_v2(files, tipo_arquivo, usuario):
         
         # Limpar caches para forçar recarregamento
         st.cache_data.clear()
+
+        # Salvar timestamp do último upload para versionamento de cache
+        try:
+            last_upload_path = Path(f"user_data/{usuario}/last_upload.txt")
+            last_upload_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(last_upload_path, "w") as f:
+                f.write(str(datetime.now().timestamp()))
+        except Exception as e:
+            st.warning(f"Não foi possível atualizar o versionamento de cache: {e}")
         
         return arquivos_processados > 0
             

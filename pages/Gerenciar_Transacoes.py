@@ -11,6 +11,7 @@ import os
 import hashlib
 import time
 from datetime import datetime, timedelta
+import numpy as np
 
 # BACKEND V2 OBRIGATÓRIO - Importações exclusivas
 from utils.database_manager_v2 import DatabaseManager
@@ -603,15 +604,28 @@ def categorizar_transacoes_com_llm(df_transacoes, categorias_disponiveis):
             try:
                 # Garantir conversão segura para float
                 valor = pd.to_numeric(row["Valor"], errors='coerce')
-                if pd.isna(valor):
+                # Se valor for array/Series/DataFrame, pegar o primeiro valor válido
+                if isinstance(valor, (pd.Series, pd.DataFrame)):
+                    valor = valor.iloc[0] if not valor.empty else 0.0
+                elif isinstance(valor, (list, tuple, np.ndarray)):
+                    valor = valor[0] if len(valor) > 0 else 0.0
+                # Garantir que é escalar antes de usar pd.isna
+                if isinstance(valor, (float, int, str)):
+                    if pd.isna(valor):
+                        valor = 0.0
+                else:
                     valor = 0.0
-                    
+                # Garantir que float(valor) só recebe escalar
+                try:
+                    valor_float = float(valor)
+                except Exception:
+                    valor_float = 0.0
                 transacoes_para_analisar.append({
                     "descricao": row["Descrição"],
-                    "valor": float(valor),
+                    "valor": valor_float,
                     "categoria_atual": row["Categoria"]
                 })
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError, IndexError):
                 # Pular transações com valores inválidos
                 continue
         
@@ -730,11 +744,23 @@ def get_cache_categorias_version():
         return os.path.getmtime(cache_file)
     return 0
 
+def get_last_upload_version(usuario):
+    """Retorna o timestamp do último upload do usuário para versionamento de cache"""
+    path = f"user_data/{usuario}/last_upload.txt"
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return f.read().strip()
+        except Exception:
+            return "0"
+    return "0"
+
 # Carregar dados com Backend V2
 @st.cache_data(ttl=300, show_spinner="Carregando transações atualizadas...")
-def carregar_dados_v2(modo_credito: bool = False, cache_version=None):
+def carregar_dados_v2(modo_credito: bool = False, cache_version=None, upload_version=None):
     """Carrega dados das transações usando Backend V2
-    cache_version: parâmetro usado para forçar refresh quando categorias são atualizadas"""
+    cache_version: parâmetro usado para forçar refresh quando categorias são atualizadas
+    upload_version: parâmetro usado para forçar refresh quando há novo upload de arquivo"""
     try:
         # Obter instância dos repositories
         user_data = backend_v2['usuario_repo'].obter_usuario_por_username(usuario)
@@ -776,7 +802,12 @@ def carregar_dados_v2(modo_credito: bool = False, cache_version=None):
         return pd.DataFrame()
 
 # Carregar dados
-df = carregar_dados_v2(modo_credito, cache_version=get_cache_categorias_version())
+# Adicionar upload_version como parâmetro do cache
+df = carregar_dados_v2(
+    modo_credito,
+    cache_version=get_cache_categorias_version(),
+    upload_version=get_last_upload_version(usuario)
+)
 
 # Filtrar por tipo (vista/crédito)
 if not df.empty:
@@ -858,8 +889,10 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
     st.info("💡 A IA analisa a descrição e valor das transações para sugerir a melhor categoria.")
     
     # Verificar se há transações não categorizadas ou mal categorizadas
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame(df)
     df_nao_categorizadas = df[
-        (df["Categoria"].isin(["Outros", "Não Categorizado"])) |        (df["Categoria"].isna())
+        (df["Categoria"].isin(["Outros", "Não Categorizado"])) | (df["Categoria"].isna())
     ]
     
     col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
@@ -917,6 +950,8 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
                     if quantidade_categorizar != "Todas":
                         qtd_limite = int(quantidade_categorizar)
                         if len(df_para_categorizar) > qtd_limite:
+                            if not isinstance(df_para_categorizar, pd.DataFrame):
+                                df_para_categorizar = pd.DataFrame(df_para_categorizar)
                             df_para_categorizar = df_para_categorizar.head(qtd_limite)
                             st.info(f"📋 Processando as {len(df_para_categorizar)} transações mais recentes de {len(df_nao_categorizadas if categorizar_apenas_outros else df)} disponíveis.")
                     else:
@@ -1170,6 +1205,8 @@ with st.expander("✨ Usar IA para Categorizar Transações", expanded=False):
         st.metric("📋 Total", total_transacoes)
     
     with col2:
+        if not isinstance(df, pd.DataFrame):
+            df = pd.DataFrame(df)
         categorizadas = len(df[~df["Categoria"].isin(["Outros", "Não Categorizado"])])
         st.metric("✅ Categorizadas", categorizadas)
     
@@ -1383,8 +1420,8 @@ if modo_credito:
         
         if not df.empty:
             # Agrupar por estabelecimento (primeiras palavras da descrição)
-            df_estabelecimentos = df.copy()
-            df_estabelecimentos["Estabelecimento"] = df_estabelecimentos["Descrição"].str.split().str[:2].str.join(" ")
+            df_estabelecimentos = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
+            df_estabelecimentos["Estabelecimento"] = df_estabelecimentos["Descrição"].astype(str).str.split().str[:2].str.join(" ")
             
             gastos_estabelecimento = df_estabelecimentos[df_estabelecimentos["Valor"] < 0].groupby("Estabelecimento")["Valor"].agg(['sum', 'count']).reset_index()
             gastos_estabelecimento["Valor_Abs"] = gastos_estabelecimento["sum"].abs()
@@ -1414,20 +1451,36 @@ if modo_credito:
         
         if not df.empty:
             # Buscar transações com valores similares
-            df_despesas = df[df["Valor"] < 0].copy()
-            df_despesas["Valor_Abs"] = df_despesas["Valor"].abs()
-            
-            # Agrupar por valor aproximado (arredondado)
-            df_despesas["Valor_Arredondado"] = df_despesas["Valor_Abs"].round(0)
+            df_despesas = df[df["Valor"] < 0].copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
+            # Garantir que é Series antes de usar .abs()
+            if not isinstance(df_despesas["Valor"], pd.Series):
+                df_despesas["Valor"] = pd.to_numeric(df_despesas["Valor"], errors='coerce')
+            if isinstance(df_despesas["Valor"], np.ndarray):
+                df_despesas["Valor_Abs"] = np.abs(df_despesas["Valor"])
+            else:
+                valor_series = pd.Series(df_despesas["Valor"])
+                df_despesas["Valor_Abs"] = valor_series.abs()
+            df_despesas["Valor_Arredondado"] = df_despesas["Valor_Abs"].round(0) if hasattr(df_despesas["Valor_Abs"], 'round') else df_despesas["Valor_Abs"]
             valores_frequentes = df_despesas.groupby("Valor_Arredondado").size()
-            valores_suspeitos = valores_frequentes[valores_frequentes >= 2].index
+            # Garantir que valores_frequentes é Series antes de acessar .index
+            if isinstance(valores_frequentes, np.ndarray):
+                valores_frequentes = pd.Series(valores_frequentes)
+            suspeitos = valores_frequentes[valores_frequentes >= 2]
+            if not isinstance(suspeitos, pd.Series):
+                suspeitos = pd.Series(suspeitos)
+            if hasattr(suspeitos, 'index'):
+                valores_suspeitos = list(suspeitos.index)
+            else:
+                valores_suspeitos = []
             
             if len(valores_suspeitos) > 0:
                 st.markdown("**🔍 Valores que aparecem múltiplas vezes (possíveis parcelamentos):**")
                 
                 for valor in valores_suspeitos[:5]:  # Mostrar top 5
                     transacoes_valor = df_despesas[df_despesas["Valor_Arredondado"] == valor]
-                    
+                    # Garantir que é DataFrame antes de usar .head()
+                    if not isinstance(transacoes_valor, pd.DataFrame):
+                        transacoes_valor = pd.DataFrame(transacoes_valor)
                     col1, col2 = st.columns([1, 3])
                     with col1:
                         st.metric("💰 Valor", f"R$ {valor:,.0f}")
@@ -1437,8 +1490,16 @@ if modo_credito:
                         st.markdown(f"**Transações de ~R$ {valor:,.0f}:**")
                         for _, transacao in transacoes_valor.head(5).iterrows():
                             # Garantir que a data seja datetime antes de formatar
-                            data_obj = pd.to_datetime(transacao["Data"]) if isinstance(transacao["Data"], str) else transacao["Data"]
-                            data_formatada = data_obj.strftime("%d/%m/%Y")
+                            data_val = transacao["Data"]
+                            if isinstance(data_val, (pd.Timestamp, datetime)):
+                                data_formatada = data_val.strftime("%d/%m/%Y")
+                            elif isinstance(data_val, str):
+                                try:
+                                    data_formatada = pd.to_datetime(data_val).strftime("%d/%m/%Y")
+                                except Exception:
+                                    data_formatada = str(data_val)
+                            else:
+                                data_formatada = str(data_val)
                             descricao = transacao["Descrição"][:40] + ("..." if len(transacao["Descrição"]) > 40 else "")
                             st.text(f"• {data_formatada} - {descricao}")
                     
@@ -1457,12 +1518,19 @@ if modo_credito:
             inicio_mes = hoje.replace(day=1)
             
             # Garantir que a coluna Data seja datetime antes da comparação
-            df_temp = df.copy()
+            df_temp = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
             df_temp["Data"] = pd.to_datetime(df_temp["Data"])
             df_mes_atual = df_temp[(df_temp["Data"] >= pd.to_datetime(inicio_mes)) & (df_temp["Valor"] < 0)]
             
             if not df_mes_atual.empty:
-                gastos_categoria = df_mes_atual.groupby("Categoria")["Valor"].sum().abs().sort_values(ascending=False)
+                gastos_categoria = df_mes_atual.groupby("Categoria")["Valor"].sum()
+                if isinstance(gastos_categoria, np.ndarray):
+                    gastos_categoria = pd.Series(gastos_categoria)
+                if hasattr(gastos_categoria, 'abs'):
+                    gastos_categoria = gastos_categoria.abs()
+                if not isinstance(gastos_categoria, pd.Series):
+                    gastos_categoria = pd.Series(gastos_categoria)
+                gastos_categoria = gastos_categoria.sort_values(ascending=False)
                 
                 st.markdown(f"**📊 Gastos do mês atual ({hoje.strftime('%m/%Y')}):**")
                 
@@ -1499,7 +1567,7 @@ with col2:
     df_com_todas_categorias = df.copy()
     categorias_selecionadas = st.multiselect(
         "Categorias",
-        options=sorted(df_com_todas_categorias["Categoria"].unique()),
+        options=sorted(pd.Series(df_com_todas_categorias["Categoria"]).unique()),
         default=None,
         help="Selecione uma ou mais categorias para filtrar"
     )
@@ -1549,251 +1617,278 @@ with col4:
     delta_color = "normal" if saldo >= 0 else "inverse"
     st.metric("💳 Saldo", formatar_valor_monetario(saldo), delta_color=delta_color)
 
-# Edição em lote
-st.subheader("⚡ Edição em Lote")
-modo_edicao_lote = st.toggle(
-    "🔄 Ativar Modo Edição em Lote",
-    help="Selecione transações e aplique categorias rapidamente"
-)
 
-if modo_edicao_lote:
-    if 'transacoes_selecionadas' not in st.session_state:
-        st.session_state.transacoes_selecionadas = set()    # Interface minimalista - busca, categoria e ações
-    col1, col2, col3 = st.columns([3, 2, 2])
-    
-    with col1:
-        # Busca rápida por padrão
-        padrao = st.text_input(
-            "🔍 Buscar por padrão",
-            placeholder="Digite algo para selecionar automaticamente (Ex: PIX, UBER, IFOOD...)",
-            help="Seleciona automaticamente transações que contenham este texto",
-            key="busca_lote"
-        )
-        if padrao:
-            # Seleção automática ao digitar
-            indices = []
-            for i, row in df_filtrado.iterrows():
-                if padrao.lower() in row['Descrição'].lower():
-                    indices.append(df_filtrado.index.get_loc(i))
-            st.session_state.transacoes_selecionadas = set(indices)
-    
-    with col2:
-        # Categoria para aplicar
-        categoria_lote = st.selectbox(
-            "🏷️ Categoria",
-            get_todas_categorias(),
-            key="cat_lote",
-            help="Categoria para aplicar às transações selecionadas"
-        )
-    
-    with col3:
-        # Botões de ação lado a lado
-        num_selecionadas = len(st.session_state.transacoes_selecionadas)
-        col_cat, col_del = st.columns(2)
-        
-        with col_cat:
-            if st.button(
-                f"✅ Categorizar ({num_selecionadas})",
-                type="primary",
-                disabled=num_selecionadas == 0,
-                use_container_width=True,
-                help=f"Aplicar categoria '{categoria_lote}' a {num_selecionadas} transações"
-            ):
-                # Preparar mapeamento para persistir no banco
-                mapeamento_descricoes = {}
-                aplicadas = 0
-                
-                for idx in st.session_state.transacoes_selecionadas:
-                    if idx < len(df_filtrado):
-                        row = df_filtrado.iloc[idx]
-                        descricao_normalizada = row['Descrição'].lower().strip()
-                        mapeamento_descricoes[descricao_normalizada] = categoria_lote
-                        aplicadas += 1
-                
-                if aplicadas > 0:
-                    # Persistir no banco de dados (Backend V2)
-                    categorias_atualizadas_bd = atualizar_categorias_lote_no_banco(usuario, mapeamento_descricoes)
-                    
-                    # Também manter no cache para compatibilidade (mas não sobrescrever banco)
-                    cache = carregar_cache_categorias()
-                    cache.update(mapeamento_descricoes)
-                    cache_salvo = salvar_cache_categorias(cache)
-                    
-                    if categorias_atualizadas_bd > 0:
-                        msg = f"✅ {aplicadas} transações categorizadas como '{categoria_lote}'!"
-                        msg += f" ({categorias_atualizadas_bd} persistidas no banco de dados)"
-                        st.success(msg)
-                          # Limpar seleção e forçar recarregamento completo
-                        st.session_state.transacoes_selecionadas = set()
-                        # Limpar TODOS os caches para forçar reload dos dados do banco
-                        st.cache_data.clear()
-                        st.cache_resource.clear()
-                        # Recarregar página
-                        st.rerun()
-                    elif cache_salvo:
-                        st.warning(f"⚠️ {aplicadas} transações categorizadas apenas no cache local (não persistidas no banco)")
-                        st.session_state.transacoes_selecionadas = set()
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error("❌ Erro ao salvar categorizações!")
-                        st.session_state.transacoes_selecionadas = set()
-                else:
-                    st.error("❌ Nenhuma transação foi processada!")
-                    st.session_state.transacoes_selecionadas = set()
-                    st.cache_data.clear()
-                    st.rerun()
-        
-        with col_del:
-            if st.button(
-                f"🗑️ Excluir ({num_selecionadas})",
-                disabled=num_selecionadas == 0,
-                use_container_width=True,
-                help=f"Excluir {num_selecionadas} transações selecionadas"
-            ):
-                excluidas = 0
-                
-                for idx in st.session_state.transacoes_selecionadas:
-                    if idx < len(df_filtrado):
-                        row = df_filtrado.iloc[idx]
-                        if excluir_transacao(row):
-                            excluidas += 1
-                
-                if excluidas > 0:
-                    st.success(f"🗑️ {excluidas} transações excluídas!")
-                    # Limpar seleção e recarregar página
-                    st.session_state.transacoes_selecionadas = set()
-                    st.cache_data.clear()
-                    st.rerun()
-    
-    # Mostrar contador (apenas como informação)
-    if st.session_state.transacoes_selecionadas:
-        st.caption(f"📋 {len(st.session_state.transacoes_selecionadas)} transações selecionadas")
-        
-# Lista de transações
-st.subheader("📋 Transações")
+# --- NOVA TABELA DE EDIÇÃO DE TRANSAÇÕES ---
 
-if len(df_filtrado) == 0:
-    st.info("🔍 Nenhuma transação encontrada com os filtros aplicados.")
-else:
-    st.info(f"📊 Exibindo {len(df_filtrado)} transações")
-    
-    # Paginação
-    items_por_pagina = 50
-    total_paginas = (len(df_filtrado) - 1) // items_por_pagina + 1
-    
-    if total_paginas > 1:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            pagina_atual = st.selectbox(
-                "📄 Página",
-                range(1, total_paginas + 1),
-                format_func=lambda x: f"Página {x} de {total_paginas}"
-            )
+# Configuração de paginação
+itens_por_pagina_opcoes = [10, 15, 20, 25, 30]
+if 'transacoes_itens_pagina' not in st.session_state:
+    st.session_state.transacoes_itens_pagina = 10
+if 'transacoes_pagina_atual' not in st.session_state:
+    st.session_state.transacoes_pagina_atual = 1
+if 'transacoes_edicoes' not in st.session_state:
+    st.session_state.transacoes_edicoes = {}
+if 'transacoes_excluir' not in st.session_state:
+    st.session_state.transacoes_excluir = set()
+
+# Função para salvar edições da página atual
+
+def salvar_edicoes_pagina_atual(df_pagina, inicio_idx):
+    """Salva as edições dos widgets da página atual no session_state.transacoes_edicoes e transacoes_excluir"""
+    for idx, (i, row) in enumerate(df_pagina.iterrows()):
+        trans_id = f"{row['Data']}_{row['Descrição']}_{row['Valor']}"
+        key_cat = f"cat_{inicio_idx+idx}"
+        key_nota = f"nota_{inicio_idx+idx}"
+        key_excluir = f"excluir_{inicio_idx+idx}"
+        # Recuperar valores atuais dos widgets
+        categoria_editada = st.session_state.get(key_cat, row['Categoria'])
+        nota_editada = st.session_state.get(key_nota, row.get('Nota', ''))
+        excluido = trans_id in st.session_state.transacoes_excluir
+        # Detectar edição
+        editado = (categoria_editada != row['Categoria']) or (nota_editada != row.get('Nota', ''))
+        if editado or excluido:
+            st.session_state.transacoes_edicoes[trans_id] = {
+                'categoria': categoria_editada,
+                'nota': nota_editada
+            }
+        elif trans_id in st.session_state.transacoes_edicoes:
+            del st.session_state.transacoes_edicoes[trans_id]
+
+# Removido: Seleção de itens por página e paginação antigos (col_pag1, col_pag2, e selectbox duplicado)
+# O bloco de paginação agora está apenas abaixo da tabela, junto ao botão Salvar todas as alterações.
+
+# Calcular paginação com base nos valores atuais
+itens_pagina = st.session_state.transacoes_itens_pagina
+pagina_atual = st.session_state.transacoes_pagina_atual
+
+total_transacoes = len(df_filtrado)
+total_paginas = (total_transacoes - 1) // itens_pagina + 1
+inicio_idx = (pagina_atual - 1) * itens_pagina
+fim_idx = min(inicio_idx + itens_pagina, total_transacoes)
+df_pagina = df_filtrado.iloc[inicio_idx:fim_idx].copy() if isinstance(df_filtrado, pd.DataFrame) else pd.DataFrame(df_filtrado)
+
+# Carregar categorias disponíveis
+categorias_disponiveis = get_todas_categorias()
+
+# Renderizar tabela
+import streamlit as st
+import streamlit.components.v1 as components
+from datetime import datetime
+
+st.markdown("""
+<style>
+tr.editado { background-color: #eaf6ff !important; }
+tr.excluir { background-color: #ffeaea !important; text-decoration: line-through; }
+td.excluir, td.excluir * { color: #b30000 !important; }
+td.editado { border-left: 4px solid #007bff; }
+</style>
+""", unsafe_allow_html=True)
+
+# Cabeçalho da tabela
+st.markdown("<h4 style='margin-top:2em'>Transações</h4>", unsafe_allow_html=True)
+
+# Aviso importante para o usuário sobre salvar edições
+st.warning("⚠️ Para garantir que todas as edições sejam salvas, clique em 'Salvar todas as alterações' antes de mudar de página. Caso contrário, edições feitas em outras páginas podem ser perdidas.")
+
+# Renderizar tabela manualmente
+st.write("")
+
+# Renderizar cabeçalho
+cols = st.columns([3, 1, 2, 1.5, 3, 1])
+col_names = ["Descrição", "Valor", "Categoria", "Data", "Nota Pessoal", "Excluir"]
+for c, name in zip(cols, col_names):
+    c.markdown(f"**{name}**")
+
+# Renderizar linhas
+for idx, (i, row) in enumerate(df_pagina.iterrows()):
+    trans_id = f"{row['Data']}_{row['Descrição']}_{row['Valor']}"
+    # Chave única para session_state
+    key_cat = f"cat_{inicio_idx+idx}"
+    key_nota = f"nota_{inicio_idx+idx}"
+    key_excluir = f"excluir_{inicio_idx+idx}"
+
+    # Estado inicial
+    edicoes = st.session_state.transacoes_edicoes.get(trans_id, {})
+    excluido = trans_id in st.session_state.transacoes_excluir
+
+    # Detectar edição
+    categoria_atual = edicoes.get('categoria', row['Categoria'])
+    nota_atual = edicoes.get('nota', row.get('Nota', ''))
+    editado = (categoria_atual != row['Categoria']) or (nota_atual != row.get('Nota', ''))
+
+    row_style = "editado" if editado else ""
+    if excluido:
+        row_style = "excluir"
+
+    # Renderizar linha como um único bloco de colunas
+    cols = st.columns([3, 1, 2, 1.5, 3, 1])
+    # Descrição
+    cols[0].markdown(f"<span class='{row_style}'>{row['Descrição']}</span>", unsafe_allow_html=True)
+    # Valor
+    cols[1].markdown(f"<span class='{row_style}'>R$ {row['Valor']:,.2f}</span>", unsafe_allow_html=True)
+    # Categoria editável (combo/autocomplete)
+    categoria_editada = cols[2].selectbox(
+        "Categoria",  # Corrigido para não ser string vazia
+        options=[categoria_atual] + [c for c in categorias_disponiveis if c != categoria_atual],
+        index=0,
+        key=key_cat,
+        placeholder="Digite ou selecione uma categoria",
+        label_visibility="collapsed"
+    )
+    if categoria_editada not in categorias_disponiveis:
+        categorias_disponiveis.append(categoria_editada)
+    # Data
+    data_val = row['Data']
+    if isinstance(data_val, (pd.Timestamp, datetime)):
+        data_str = data_val.strftime('%d/%m/%Y')
+    elif isinstance(data_val, str):
+        try:
+            data_str = pd.to_datetime(data_val).strftime('%d/%m/%Y')
+        except Exception:
+            data_str = str(data_val)
     else:
-        pagina_atual = 1
-    
-    # Calcular índices para paginação
-    inicio_idx = (pagina_atual - 1) * items_por_pagina
-    fim_idx = min(inicio_idx + items_por_pagina, len(df_filtrado))
-    
-    df_pagina = df_filtrado.iloc[inicio_idx:fim_idx]
-      # Exibir transações
-    for idx, (original_idx, row) in enumerate(df_pagina.iterrows()):
-        global_idx = inicio_idx + idx
-        
-        # Checkbox para seleção (apenas no modo lote)
-        if modo_edicao_lote:
-            is_selected = global_idx in st.session_state.transacoes_selecionadas
-            col_select, col_content = st.columns([0.5, 9.5])
-            
-            with col_select:
-                if st.checkbox("", value=is_selected, key=f"select_{global_idx}_{inicio_idx}"):
-                    st.session_state.transacoes_selecionadas.add(global_idx)
-                else:                    st.session_state.transacoes_selecionadas.discard(global_idx)
-            
-            with col_content:
-                container = st.container()
+        data_str = str(data_val)
+    cols[3].markdown(f"<span class='{row_style}'>{data_str}</span>", unsafe_allow_html=True)
+    # Nota pessoal editável
+    nota_editada = cols[4].text_input(
+        "Nota Pessoal",  # Corrigido para não ser string vazia
+        value=nota_atual,
+        max_chars=250,
+        key=key_nota,
+        placeholder="Nota pessoal (máx. 250 caracteres)",
+        label_visibility="collapsed"
+    )
+    # Botão excluir
+    excluir_btn = cols[5].button(
+        "Excluir" if not excluido else "Desfazer",
+        key=key_excluir,
+        help="Marcar para exclusão" if not excluido else "Desfazer exclusão"
+    )
+    if excluir_btn:
+        if not excluido:
+            st.session_state.transacoes_excluir.add(trans_id)
         else:
-            container = st.container()
-        
-        with container:
-            # Indicador visual se está selecionada (no modo lote)
-            prefix = "✅ " if modo_edicao_lote and global_idx in st.session_state.transacoes_selecionadas else ""
-            
-            with st.expander(
-                f"{prefix}{'💰' if row['Valor'] > 0 else '💸'} {row['Data']} - {row['Descrição'][:50]}{'...' if len(row['Descrição']) > 50 else ''} - {formatar_valor_monetario(row['Valor'])}",
-                expanded=False
-            ):
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    # Informações da transação
-                    st.markdown(f"**📅 Data:** {row['Data']}")
-                    st.markdown(f"**📝 Descrição:** {row['Descrição']}")
-                    st.markdown(f"**💰 Valor:** {formatar_valor_monetario(row['Valor'])}")
-                    st.markdown(f"**🏷️ Categoria Atual:** {row['Categoria']}")
-                    if 'Origem' in row:
-                        st.markdown(f"**🏦 Origem:** {row['Origem']}")
-                      # Exibir descrição personalizada se existir
-                    descricoes = carregar_descricoes_personalizadas()
-                    hash_transacao = gerar_hash_transacao(row)
-                    if hash_transacao in descricoes:
-                        st.markdown(f"**📋 Nota Pessoal:** {descricoes[hash_transacao]}")
-                
-                with col2:
-                    if modo_edicao_lote:
-                        # Interface minimalista para modo lote
-                        st.markdown("**🔄 Modo Lote**")
-                        st.info("Use os controles acima para aplicar categorias em lote. Selecione/deselecione com o checkbox à esquerda.")
-                    else:
-                        # Interface completa para modo individual
-                        nova_categoria = st.selectbox(
-                            "🏷️ Nova Categoria",
-                            get_todas_categorias(),
-                            index=get_todas_categorias().index(row['Categoria']) if row['Categoria'] in get_todas_categorias() else 0,
-                            key=f"cat_{idx}_{inicio_idx}"                        )
-                        
-                        if nova_categoria != row['Categoria']:
-                            # Aplicar mudança imediatamente no modo individual
-                            if st.button(f"✅ Alterar", key=f"change_{idx}_{inicio_idx}", type="primary"):
-                                # Persistir no banco de dados
-                                success_bd = atualizar_categoria_no_banco(usuario, row['Descrição'], nova_categoria)
-                                
-                                # Também salvar no cache para compatibilidade
-                                cache = carregar_cache_categorias()
-                                descricao_normalizada = row['Descrição'].lower().strip()
-                                cache[descricao_normalizada] = nova_categoria
-                                cache_salvo = salvar_cache_categorias(cache)
-                                
-                                if success_bd or cache_salvo:
-                                    msg = f"✅ Categoria alterada para: {nova_categoria}"
-                                    if success_bd:
-                                        msg += " (persistido no banco)"
-                                    st.success(msg)
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                else:
-                                    st.error("❌ Erro ao salvar categoria no banco de dados!")
-                        
-                        # Adicionar/editar descrição personalizada
-                        st.markdown("---")
-                        nova_descricao = st.text_area(
-                            "📋 Nota Pessoal",
-                            value=descricoes.get(hash_transacao, ""),
-                            placeholder="Adicione uma nota pessoal...",
-                            key=f"desc_{idx}_{inicio_idx}",
-                            help="Esta nota será salva apenas para esta transação específica"                        )                        
-                        col_save, col_delete = st.columns(2)
-                        with col_save:
-                            if st.button(f"💾 Salvar Nota", key=f"save_desc_{idx}_{inicio_idx}"):
-                                if salvar_descricao_personalizada(hash_transacao, nova_descricao):
-                                    st.success("✅ Nota salva!")
-                                    st.rerun()
-                        
-                        with col_delete:
-                            if st.button(f"🗑️ Excluir Transação", key=f"delete_{idx}_{inicio_idx}", help="Excluir esta transação"):
-                                if excluir_transacao(row):
-                                    st.success("🗑️ Transação excluída!")
-                                    st.cache_data.clear()
-                                    st.rerun()
+            st.session_state.transacoes_excluir.discard(trans_id)
+
+    # Atualizar edições
+    if editado or excluido:
+        st.session_state.transacoes_edicoes[trans_id] = {
+            'categoria': categoria_editada,
+            'nota': nota_editada
+        }
+    elif trans_id in st.session_state.transacoes_edicoes:
+        del st.session_state.transacoes_edicoes[trans_id]
+
+# --- Bloco de paginação refatorado ---
+col_save, col_spacer, col_itens_pagina, col_pagina, col_btn_anterior, col_btn_proxima = st.columns([2, 6, 2, 2, 1, 1])
+
+with col_save:
+    if st.button("💾 Salvar todas as alterações", type="primary"):
+        # Salvar edições da página atual antes de processar
+        salvar_edicoes_pagina_atual(df_pagina, inicio_idx)
+        # Aplicar edições
+        total_editadas = 0
+        total_excluidas = 0
+        for trans_id, ed in st.session_state.transacoes_edicoes.items():
+            mask = (
+                (pd.Series(df_filtrado['Data']).astype(str) + '_' + pd.Series(df_filtrado['Descrição']) + '_' + pd.Series(df_filtrado['Valor']).astype(str)) == trans_id
+            )
+            if mask.any():
+                row = df_filtrado[mask].iloc[0] if isinstance(df_filtrado, pd.DataFrame) else pd.DataFrame(df_filtrado)[mask].iloc[0]
+                if ed['categoria'] != row['Categoria']:
+                    atualizar_categoria_no_banco(usuario, row['Descrição'], ed['categoria'])
+                    total_editadas += 1
+                hash_transacao = gerar_hash_transacao(row)
+                if ed['nota'] != row.get('Nota', ''):
+                    salvar_descricao_personalizada(hash_transacao, ed['nota'])
+                    total_editadas += 1
+        for trans_id in list(st.session_state.transacoes_excluir):
+            mask = (
+                (pd.Series(df_filtrado['Data']).astype(str) + '_' + pd.Series(df_filtrado['Descrição']) + '_' + pd.Series(df_filtrado['Valor']).astype(str)) == trans_id
+            )
+            if mask.any():
+                row = df_filtrado[mask].iloc[0] if isinstance(df_filtrado, pd.DataFrame) else pd.DataFrame(df_filtrado)[mask].iloc[0]
+                if excluir_transacao(row):
+                    total_excluidas += 1
+        st.session_state.transacoes_edicoes = {}
+        st.session_state.transacoes_excluir = set()
+        st.success(f"Alterações salvas! {total_editadas} edições e {total_excluidas} exclusões aplicadas.")
+        st.cache_data.clear()
+        st.rerun()
+
+with col_spacer:
+    st.write("")
+
+with col_itens_pagina:
+    itens_pagina = st.selectbox(
+        "Transações por página",
+        options=itens_por_pagina_opcoes,
+        index=itens_por_pagina_opcoes.index(st.session_state.transacoes_itens_pagina),
+        key="itens_pagina_select_novo"
+    )
+    if itens_pagina != st.session_state.transacoes_itens_pagina:
+        salvar_edicoes_pagina_atual(df_pagina, inicio_idx)
+        st.session_state.transacoes_itens_pagina = itens_pagina
+        st.session_state.transacoes_pagina_atual = 1
+        st.rerun()
+
+with col_pagina:
+    total_paginas = (total_transacoes - 1) // itens_pagina + 1
+    pagina_atual = st.session_state.transacoes_pagina_atual
+    pagina_atual_novo = st.selectbox(
+        "Página",
+        options=list(range(1, total_paginas + 1)),
+        index=pagina_atual - 1 if pagina_atual <= total_paginas else 0,
+        key="pagina_atual_select_paginacao"
+    )
+    if pagina_atual_novo != pagina_atual:
+        salvar_edicoes_pagina_atual(df_pagina, inicio_idx)
+        st.session_state.transacoes_pagina_atual = pagina_atual_novo
+        st.rerun()
+
+with col_btn_anterior:
+    if st.button('◀️', key='btn_anterior_paginacao', disabled=pagina_atual <= 1, use_container_width=False):
+        salvar_edicoes_pagina_atual(df_pagina, inicio_idx)
+        st.session_state.transacoes_pagina_atual = max(1, pagina_atual - 1)
+        st.rerun()
+
+with col_btn_proxima:
+    if st.button('▶️', key='btn_proxima_paginacao', disabled=pagina_atual >= total_paginas, use_container_width=False):
+        salvar_edicoes_pagina_atual(df_pagina, inicio_idx)
+        st.session_state.transacoes_pagina_atual = min(total_paginas, pagina_atual + 1)
+        st.rerun()
+
+# Adicionar CSS para alinhar inputs e bordas da tabela
+st.markdown("""
+<style>
+[data-testid='stSelectbox'] > div, [data-testid='stTextInput'] > div {
+    margin-top: -8px;
+    margin-bottom: -8px;
+}
+/* Bordas para cada linha e coluna da tabela */
+[data-testid="stHorizontalBlock"] > div {
+    border-bottom: 1px solid #444;
+}
+[data-testid="stHorizontalBlock"] > div:not(:last-child) {
+    border-right: 1px solid #444;
+}
+[data-testid="stHorizontalBlock"]:first-child > div {
+    border-top: 2px solid #888;
+    border-bottom: 2px solid #888;
+    background: #222;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Adicionar CSS para deixar os botões de paginação mais compactos
+st.markdown('''
+<style>
+button[data-testid="baseButton-secondary"] {
+    min-width: 32px !important;
+    max-width: 36px !important;
+    padding: 2px 4px !important;
+    font-size: 1.1em !important;
+}
+</style>
+''', unsafe_allow_html=True)
+
