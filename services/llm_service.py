@@ -53,7 +53,7 @@ class LLMService:
             personality_prompts = {
                 "clara": '''\
 Você é um assistente financeiro inteligente que ajuda pessoas a gerenciar suas finanças pessoais.
-Seu tom é amigável, acolhedor, descontraído e utiliza emojis de forma moderada para tornar a conversa mais leve e divertida.
+Seu tom é amigável, acolhedor e descontraído.
 Explique conceitos de forma simples e incentive o usuário. Use exemplos práticos quando possível.
 Baseie suas respostas nos dados financeiros fornecidos no contexto. Não invente informações que não estejam presentes.
 Se não tiver informações suficientes para responder uma pergunta específica, seja honesto sobre essa limitação.
@@ -62,7 +62,7 @@ Use formatação Markdown para tornar suas respostas mais organizadas e fáceis 
                 "tecnica": '''\
 Você é um assistente financeiro altamente técnico e formal, especializado em finanças pessoais.
 Utilize linguagem precisa, termos técnicos e explique conceitos financeiros de forma detalhada e objetiva.
-Evite o uso de emojis e mantenha um tom profissional. Baseie suas respostas estritamente nos dados fornecidos.
+Mantenha um tom profissional. Baseie suas respostas estritamente nos dados fornecidos.
 Se não houver dados suficientes, informe de maneira clara e objetiva.
 Use formatação Markdown para estruturar suas respostas.
 ''',
@@ -70,7 +70,7 @@ Use formatação Markdown para estruturar suas respostas.
 Você é um assistente financeiro direto, objetivo e sem rodeios, com um toque de informalidade.
 Responda de forma curta, clara, prática e até um pouco "durona", como um coach que não passa a mão na cabeça.
 Use frases de impacto, gírias leves e nunca use frases de apoio, frases acolhedoras ou emojis amigáveis.
-Não diga "estou aqui para ajudar", "espero que isso ajude" ou qualquer frase polida. Não use emojis.
+Não diga "estou aqui para ajudar", "espero que isso ajude" ou qualquer frase polida.
 Seja prático, vá direto ao ponto e não enrole.
 Exemplo de resposta: "Seu saldo está ok, mas se não controlar os gastos, vai ficar no vermelho. Fique esperto."
 Outro exemplo: "Gasto alto com taxas. Corta isso se quiser sobrar dinheiro."
@@ -82,6 +82,19 @@ Use Markdown para organizar as respostas.
             # Selecionar personalidade
             personalidade = context.get('personalidade', 'clara')
             system_prompt = personality_prompts.get(personalidade, personality_prompts['clara'])
+
+            # Se houver prompt_customizado ou parametros_personalidade, sobrescreva ou complemente o prompt
+            prompt_customizado = context.get('prompt_customizado')
+            parametros_personalidade = context.get('parametros_personalidade')
+            if prompt_customizado or parametros_personalidade:
+                # Montar instrução explícita
+                if prompt_customizado:
+                    custom = prompt_customizado
+                else:
+                    custom = ''
+                    if parametros_personalidade:
+                        custom = f"Formalidade: {parametros_personalidade.get('formalidade', '')} | Emojis: {parametros_personalidade.get('emojis', '')} | Tom: {parametros_personalidade.get('tom', '')} | Foco: {parametros_personalidade.get('foco', '')}"
+                system_prompt = f"{system_prompt}\n\nConsidere as seguintes características de personalidade ao responder:\n{custom}"
 
             # Montagem dos messages para a API
             messages = [

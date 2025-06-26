@@ -3,7 +3,7 @@ Serviço de Assistente Virtual Financeiro com IA
 Sistema conversacional que responde perguntas financeiras baseado em dados do usuário
 """
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import re
 from datetime import datetime
 import json
@@ -131,13 +131,15 @@ class FinancialAIAssistant:
         except Exception as e:
             raise e
     
-    def process_message_with_personality(self, user_id: int, message: str, personalidade: str = "clara", data_inicio: str = '', data_fim: str = '', qtd_transacoes: int = 50) -> Dict[str, Any]:
+    def process_message_with_personality(self, user_id: int, message: str, personalidade: str = "clara", data_inicio: str = '', data_fim: str = '', qtd_transacoes: int = 50, prompt_customizado: Optional[str] = None) -> Dict[str, Any]:
         """Processa mensagem do usuário considerando a personalidade selecionada, período e quantidade de transações"""
         try:
             data_inicio_str = str(data_inicio) if data_inicio else ''
             data_fim_str = str(data_fim) if data_fim else ''
             context = self._get_user_financial_context(user_id, data_inicio_str, data_fim_str, qtd_transacoes)
             context['personalidade'] = personalidade
+            if prompt_customizado:
+                context['prompt_customizado'] = prompt_customizado
             llm_result = self.llm_service.generate_response(message, context)
             response = llm_result['response']
             personalidade_usada = llm_result.get('personalidade')

@@ -296,6 +296,23 @@ class DatabaseManager:
                 )
             """)
             
+            # Tabela de personalidades customizadas de IA por usuário
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS personalidades_ia_usuario (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    nome_perfil TEXT NOT NULL,
+                    formalidade TEXT,
+                    uso_emojis TEXT,
+                    tom TEXT,
+                    foco TEXT,
+                    prompt_base TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, nome_perfil)
+                )
+            """)
+            
             # Índices para performance otimizada
             self._criar_indices(conn)
             

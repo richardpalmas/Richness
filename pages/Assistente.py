@@ -7,13 +7,17 @@ import streamlit as st
 from datetime import datetime
 import time
 import pandas as pd
+from typing import Optional
+import json
+import os
 
 from utils.auth import verificar_autenticacao
 from services.ai_assistant_service import FinancialAIAssistant
 from services.ai_categorization_service import AICategorization
 from utils.database_manager_v2 import DatabaseManager
-from utils.repositories_v2 import UsuarioRepository, TransacaoRepository
+from utils.repositories_v2 import UsuarioRepository, TransacaoRepository, PersonalidadeIARepository
 from utils.filtros import filtro_data
+from componentes.profile_pic_component import get_profile_pic_path
 
 
 def obter_user_id_do_usuario():
@@ -38,8 +42,13 @@ def obter_user_id_do_usuario():
 def render_chat_interface(user_id: int):
     """Renderiza a interface de chat"""
     try:
-        # Criar abas de menu para a conversa com IA e Gerenciar Perfis IA
-        tabs = st.tabs(["💬 Conversa com IA", "👤 Gerenciar Perfis IA"])
+        # Inicializar variáveis de perfil e repositório no início da função
+        personalidade_repo = PersonalidadeIARepository(DatabaseManager())
+        perfil_nome_amigavel = "Clara e Acolhedora"
+        perfil_nome_tecnico = "Técnico e Formal"
+        perfil_nome_durao = "Durão e Informal"
+        # Criar abas de menu para a conversa com Assistente e Gerenciar Perfis IA
+        tabs = st.tabs(["💬 Conversa Com Assistente", "👤 Gerenciar Perfis IA"])
         with tabs[0]:
             # Exibir período selecionado acima do chat
             data_inicio = st.session_state.get('ia_periodo_inicio', '')
@@ -48,6 +57,87 @@ def render_chat_interface(user_id: int):
                 st.info(f"🗓️ Período selecionado: {data_inicio} a {data_fim}")
             else:
                 st.info("🗓️ Período: Todas as transações disponíveis")
+
+            # Avatar da IA conforme personalidade
+            avatar_map = {
+                'clara': 'imgs/perfil_amigavel_fem.png',
+                'tecnica': 'imgs/perfil_tecnico_masc.png',
+                'durona': 'imgs/perfil_durao_mas.png'
+            }
+            personalidade = st.session_state.get('ai_personality', 'clara')
+            avatar_path = avatar_map.get(personalidade, 'imgs/perfil_amigavel_fem.png')
+
+            # Avatar do usuário (foto de perfil, se disponível)
+            usuario_username = st.session_state.get('usuario', None)
+            user_avatar_path = None
+            if usuario_username:
+                user_avatar_path = get_profile_pic_path(usuario_username)
+                if user_avatar_path and not os.path.isabs(user_avatar_path):
+                    user_avatar_path = os.path.join(os.getcwd(), user_avatar_path)
+                if not user_avatar_path or not os.path.exists(user_avatar_path):
+                    user_avatar_path = 'imgs/perfil_amigavel_fem.png'
+            else:
+                user_avatar_path = 'imgs/perfil_amigavel_fem.png'
+
+            # Parâmetros atuais da personalidade
+            params = {}
+            if personalidade == 'clara':
+                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_amigavel)
+                params_ss = st.session_state.get('perfil_amigavel_parametros', {})
+                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                if params and (not params.get('emojis') or params.get('emojis') == ''):
+                    params['emojis'] = 'Nenhum'
+            elif personalidade == 'tecnica':
+                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_tecnico)
+                params_ss = st.session_state.get('perfil_tecnico_parametros', {})
+                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                if params and (not params.get('emojis') or params.get('emojis') == ''):
+                    params['emojis'] = 'Nenhum'
+            elif personalidade == 'durona':
+                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_durao)
+                params_ss = st.session_state.get('perfil_durao_parametros', {})
+                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                if params and (not params.get('emojis') or params.get('emojis') == ''):
+                    params['emojis'] = 'Nenhum'
+
+            # Card visual dos parâmetros
+            if params:
+                st.markdown(f'''
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 12px 18px; border-radius: 12px; color: #fff; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-size: 15px;">
+    <b>Personalidade:</b> {personalidade.capitalize()}<br>
+    <b>Formalidade:</b> {params.get('formalidade', '')} &nbsp;|&nbsp;
+    <b>Emojis:</b> {params.get('emojis', 'Nenhum')} &nbsp;|&nbsp;
+    <b>Tom:</b> {params.get('tom', '')} &nbsp;|&nbsp;
+    <b>Foco:</b> {params.get('foco', '')}
+</div>
+''', unsafe_allow_html=True)
+
+            # Campo de debug visual
+            emojis_valor = params.get('emojis', 'Nenhum') or 'Nenhum'
+            prompt_customizado = f"Formalidade: {params.get('formalidade', '')} | Emojis: {emojis_valor} | Tom: {params.get('tom', '')} | Foco: {params.get('foco', '')}"
+            # Prompt final
+            prompt_final = None
+            if 'chat_history' in st.session_state and st.session_state.chat_history:
+                for msg in reversed(st.session_state.chat_history):
+                    if isinstance(msg, dict) and msg.get('role') == 'assistant' and 'prompt' in msg:
+                        prompt_final = msg['prompt']
+                        break
+            # Contexto
+            context = st.session_state.get('last_context')
+            with st.expander('🛠️ Debug: Parâmetros e Prompt Enviados para o LLM', expanded=False):
+                st.markdown('**Parâmetros de Personalidade:**')
+                st.code(prompt_customizado, language='markdown')
+                st.markdown('**Prompt Final Enviado ao LLM:**')
+                if prompt_final:
+                    st.code(prompt_final, language='markdown')
+                else:
+                    st.info('Prompt final ainda não disponível. Envie uma mensagem para gerar.')
+                st.markdown('**Contexto Enviado ao LLM:**')
+                if context:
+                    st.code(json.dumps(context, indent=2, ensure_ascii=False), language='json')
+                else:
+                    st.info('Contexto ainda não disponível. Envie uma mensagem para gerar.')
+
             # Inicializar histórico de chat
             if 'chat_history' not in st.session_state:
                 st.session_state.chat_history = []
@@ -57,10 +147,10 @@ def render_chat_interface(user_id: int):
             # Exibir histórico de chat
             for message in st.session_state.chat_history:
                 if message["role"] == "user":
-                    with st.chat_message("user"):
+                    with st.chat_message("user", avatar=user_avatar_path):
                         st.write(message["content"])
                 else:
-                    with st.chat_message("assistant", avatar="🤖"):
+                    with st.chat_message("assistant", avatar=avatar_path):
                         st.write(message["content"])
             # Input para nova mensagem
             st.markdown("---")
@@ -98,7 +188,7 @@ def render_chat_interface(user_id: int):
             with col_img1:
                 st.image(
                     "imgs/perfil_amigavel_fem.png",
-                    width=310,
+                    width=230,
                     caption="Clara e Acolhedora"
                 )
                 if st.button("Ver detalhes do perfil Clara e Acolhedora", key="btn_perfil_amigavel", help="Clique na imagem para ver detalhes do perfil", use_container_width=True):
@@ -107,10 +197,22 @@ def render_chat_interface(user_id: int):
                     editar_caracteristicas_amigavel()
 
             with col_details1:
+                # Garantir existência do dicionário de parâmetros antes do acesso
+                if 'perfil_amigavel_parametros' not in st.session_state or not isinstance(st.session_state['perfil_amigavel_parametros'], dict):
+                    st.session_state.perfil_amigavel_parametros = {
+                        'formalidade': 'Informal',
+                        'emojis': 'Alto',
+                        'tom': 'Muito Amigável',
+                        'foco': 'Motivacional'
+                    }
                 if st.session_state.show_perfil_amigavel:
                     if st.session_state.show_editar_caracteristicas_amigavel:
-                        st.markdown("#### ✏️ Personalize os traços deste perfil")
-                        if 'perfil_amigavel_parametros' not in st.session_state:
+                        user_id_db = obter_user_id_do_usuario()
+                        if user_id_db is None:
+                            st.error("Não foi possível obter o usuário. Faça login novamente.")
+                            return
+                        # Garantir existência do dicionário de parâmetros após leitura do banco
+                        if 'perfil_amigavel_parametros' not in st.session_state or not isinstance(st.session_state['perfil_amigavel_parametros'], dict):
                             st.session_state.perfil_amigavel_parametros = {
                                 'formalidade': 'Informal',
                                 'emojis': 'Alto',
@@ -118,34 +220,64 @@ def render_chat_interface(user_id: int):
                                 'foco': 'Motivacional'
                             }
                         with st.form("form_editar_perfil_amigavel"):
+                            formalidade_opcoes = ["Informal", "Neutro", "Formal"]
+                            formalidade_val = st.session_state.perfil_amigavel_parametros.get('formalidade', 'Informal')
+                            if formalidade_val not in formalidade_opcoes:
+                                formalidade_val = 'Informal'
                             formalidade = st.selectbox(
                                 "Formalidade",
-                                ["Informal", "Neutro", "Formal"],
-                                index=["Informal", "Neutro", "Formal"].index(st.session_state.perfil_amigavel_parametros['formalidade'])
+                                formalidade_opcoes,
+                                index=formalidade_opcoes.index(formalidade_val)
                             )
+                            emojis_opcoes = ["Nenhum", "Moderado", "Alto"]
+                            emojis_val = st.session_state.perfil_amigavel_parametros.get('emojis', 'Alto')
+                            if emojis_val not in emojis_opcoes:
+                                emojis_val = 'Alto'
                             emojis = st.selectbox(
                                 "Uso de Emojis",
-                                ["Nenhum", "Moderado", "Alto"],
-                                index=["Nenhum", "Moderado", "Alto"].index(st.session_state.perfil_amigavel_parametros['emojis'])
+                                emojis_opcoes,
+                                index=emojis_opcoes.index(emojis_val)
                             )
+                            tom_opcoes = ["Amigável", "Muito Amigável", "Melhor Amiga"]
+                            tom_val = st.session_state.perfil_amigavel_parametros.get('tom', 'Muito Amigável')
+                            if tom_val not in tom_opcoes:
+                                tom_val = 'Muito Amigável'
                             tom = st.selectbox(
                                 "Tom",
-                                ["Amigável", "Muito Amigável", "Melhor Amiga"],
-                                index=["Amigável", "Muito Amigável", "Melhor Amiga"].index(st.session_state.perfil_amigavel_parametros['tom'])
+                                tom_opcoes,
+                                index=tom_opcoes.index(tom_val)
                             )
+                            foco_opcoes = ["Neutro", "Motivacional", "Voa Meu Bem"]
+                            foco_val = st.session_state.perfil_amigavel_parametros.get('foco', 'Motivacional')
+                            if foco_val not in foco_opcoes:
+                                foco_val = 'Motivacional'
                             foco = st.selectbox(
                                 "Foco",
-                                ["Neutro", "Motivacional", "Voa Meu Bem"],
-                                index=["Neutro", "Motivacional", "Voa Meu Bem"].index(st.session_state.perfil_amigavel_parametros['foco'])
+                                foco_opcoes,
+                                index=foco_opcoes.index(foco_val)
                             )
                             submit = st.form_submit_button("Salvar alterações")
                             if submit:
+                                print(f"[DEBUG] Valor de emojis selecionado no formulário (amigável): {emojis}")
+                                personalidade_repo = PersonalidadeIARepository(DatabaseManager())
+                                emojis_valor = emojis if emojis else 'Nenhum'
+                                print(f"[DEBUG] Valor de emojis salvo no session_state (amigável): {emojis_valor}")
                                 st.session_state.perfil_amigavel_parametros = {
                                     'formalidade': formalidade,
-                                    'emojis': emojis,
+                                    'emojis': emojis_valor,
                                     'tom': tom,
                                     'foco': foco
                                 }
+                                print(f"[DEBUG] Salvando no banco (amigável): {emojis_valor}")
+                                personalidade_repo.salvar_personalidade(
+                                    user_id=user_id_db,
+                                    nome_perfil=perfil_nome_amigavel,
+                                    formalidade=formalidade,
+                                    uso_emojis=emojis_valor,
+                                    tom=tom,
+                                    foco=foco,
+                                    prompt_base=None
+                                )
                                 st.success("Parâmetros atualizados com sucesso!")
                     else:
                         st.markdown("""
@@ -182,7 +314,7 @@ def render_chat_interface(user_id: int):
             with col_img2:
                 st.image(
                     "imgs/perfil_tecnico_masc.png",
-                    width=310,
+                    width=230,
                     caption="Técnico e Formal"
                 )
                 if st.button("Ver detalhes do perfil Técnico e Formal", key="btn_perfil_tecnico", help="Clique na imagem para ver detalhes do perfil", use_container_width=True):
@@ -191,10 +323,20 @@ def render_chat_interface(user_id: int):
                     editar_caracteristicas_tecnico()
 
             with col_details2:
+                if 'perfil_tecnico_parametros' not in st.session_state or not isinstance(st.session_state['perfil_tecnico_parametros'], dict):
+                    st.session_state.perfil_tecnico_parametros = {
+                        'formalidade': 'Formal',
+                        'emojis': 'Nenhum',
+                        'tom': 'Objetivo',
+                        'foco': 'Analítico'
+                    }
                 if st.session_state.show_perfil_tecnico:
                     if st.session_state.show_editar_caracteristicas_tecnico:
-                        st.markdown("#### ✏️ Personalize os traços deste perfil")
-                        if 'perfil_tecnico_parametros' not in st.session_state:
+                        user_id_db = obter_user_id_do_usuario()
+                        if user_id_db is None:
+                            st.error("Não foi possível obter o usuário. Faça login novamente.")
+                            return
+                        if 'perfil_tecnico_parametros' not in st.session_state or not isinstance(st.session_state['perfil_tecnico_parametros'], dict):
                             st.session_state.perfil_tecnico_parametros = {
                                 'formalidade': 'Formal',
                                 'emojis': 'Nenhum',
@@ -202,34 +344,64 @@ def render_chat_interface(user_id: int):
                                 'foco': 'Analítico'
                             }
                         with st.form("form_editar_perfil_tecnico"):
+                            formalidade_opcoes = ["Informal", "Neutro", "Formal"]
+                            formalidade_val = st.session_state.perfil_tecnico_parametros.get('formalidade', 'Formal')
+                            if formalidade_val not in formalidade_opcoes:
+                                formalidade_val = 'Formal'
                             formalidade = st.selectbox(
                                 "Formalidade",
-                                ["Informal", "Neutro", "Formal"],
-                                index=["Informal", "Neutro", "Formal"].index(st.session_state.perfil_tecnico_parametros['formalidade'])
+                                formalidade_opcoes,
+                                index=formalidade_opcoes.index(formalidade_val)
                             )
+                            emojis_opcoes = ["Nenhum", "Moderado", "Alto"]
+                            emojis_val = st.session_state.perfil_tecnico_parametros.get('emojis', 'Nenhum')
+                            if emojis_val not in emojis_opcoes:
+                                emojis_val = 'Nenhum'
                             emojis = st.selectbox(
                                 "Uso de Emojis",
-                                ["Nenhum", "Moderado", "Alto"],
-                                index=["Nenhum", "Moderado", "Alto"].index(st.session_state.perfil_tecnico_parametros['emojis'])
+                                emojis_opcoes,
+                                index=emojis_opcoes.index(emojis_val)
                             )
+                            tom_opcoes = ["Objetivo", "Preciso", "Formal"]
+                            tom_val = st.session_state.perfil_tecnico_parametros.get('tom', 'Objetivo')
+                            if tom_val not in tom_opcoes:
+                                tom_val = 'Objetivo'
                             tom = st.selectbox(
                                 "Tom",
-                                ["Objetivo", "Preciso", "Formal"],
-                                index=["Objetivo", "Preciso", "Formal"].index(st.session_state.perfil_tecnico_parametros['tom'])
+                                tom_opcoes,
+                                index=tom_opcoes.index(tom_val)
                             )
+                            foco_opcoes = ["Analítico", "Neutro", "Recomendação"]
+                            foco_val = st.session_state.perfil_tecnico_parametros.get('foco', 'Analítico')
+                            if foco_val not in foco_opcoes:
+                                foco_val = 'Analítico'
                             foco = st.selectbox(
                                 "Foco",
-                                ["Analítico", "Neutro", "Recomendação"],
-                                index=["Analítico", "Neutro", "Recomendação"].index(st.session_state.perfil_tecnico_parametros['foco'])
+                                foco_opcoes,
+                                index=foco_opcoes.index(foco_val)
                             )
                             submit = st.form_submit_button("Salvar alterações")
                             if submit:
+                                print(f"[DEBUG] Valor de emojis selecionado no formulário (técnico): {emojis}")
+                                personalidade_repo = PersonalidadeIARepository(DatabaseManager())
+                                emojis_valor = emojis if emojis else 'Nenhum'
+                                print(f"[DEBUG] Valor de emojis salvo no session_state (técnico): {emojis_valor}")
                                 st.session_state.perfil_tecnico_parametros = {
                                     'formalidade': formalidade,
-                                    'emojis': emojis,
+                                    'emojis': emojis_valor,
                                     'tom': tom,
                                     'foco': foco
                                 }
+                                print(f"[DEBUG] Salvando no banco (técnico): {emojis_valor}")
+                                personalidade_repo.salvar_personalidade(
+                                    user_id=user_id_db,
+                                    nome_perfil=perfil_nome_tecnico,
+                                    formalidade=formalidade,
+                                    uso_emojis=emojis_valor,
+                                    tom=tom,
+                                    foco=foco,
+                                    prompt_base=None
+                                )
                                 st.success("Parâmetros atualizados com sucesso!")
                     else:
                         st.markdown("""
@@ -264,9 +436,9 @@ def render_chat_interface(user_id: int):
 
             with col_img3:
                 st.image(
-                    "imgs/perfil_durao_fem.png",
-                    width=310,
-                    caption="Durona e Informal"
+                    "imgs/perfil_durao_mas.png",
+                    width=230,
+                    caption="Durão e Informal"
                 )
                 if st.button("Ver detalhes do perfil Durão e Informal", key="btn_perfil_durao", help="Clique na imagem para ver detalhes do perfil", use_container_width=True):
                     toggle_perfil_durao()
@@ -274,10 +446,20 @@ def render_chat_interface(user_id: int):
                     editar_caracteristicas_durao()
 
             with col_details3:
+                if 'perfil_durao_parametros' not in st.session_state or not isinstance(st.session_state['perfil_durao_parametros'], dict):
+                    st.session_state.perfil_durao_parametros = {
+                        'formalidade': 'Informal',
+                        'emojis': 'Nenhum',
+                        'tom': 'Durão',
+                        'foco': 'Disciplina'
+                    }
                 if st.session_state.show_perfil_durao:
                     if st.session_state.show_editar_caracteristicas_durao:
-                        st.markdown("#### ✏️ Personalize os traços deste perfil")
-                        if 'perfil_durao_parametros' not in st.session_state:
+                        user_id_db = obter_user_id_do_usuario()
+                        if user_id_db is None:
+                            st.error("Não foi possível obter o usuário. Faça login novamente.")
+                            return
+                        if 'perfil_durao_parametros' not in st.session_state or not isinstance(st.session_state['perfil_durao_parametros'], dict):
                             st.session_state.perfil_durao_parametros = {
                                 'formalidade': 'Informal',
                                 'emojis': 'Nenhum',
@@ -285,34 +467,64 @@ def render_chat_interface(user_id: int):
                                 'foco': 'Disciplina'
                             }
                         with st.form("form_editar_perfil_durao"):
+                            formalidade_opcoes = ["Informal", "Neutro", "Formal"]
+                            formalidade_val = st.session_state.perfil_durao_parametros.get('formalidade', 'Informal')
+                            if formalidade_val not in formalidade_opcoes:
+                                formalidade_val = 'Informal'
                             formalidade = st.selectbox(
                                 "Formalidade",
-                                ["Informal", "Neutro", "Formal"],
-                                index=["Informal", "Neutro", "Formal"].index(st.session_state.perfil_durao_parametros['formalidade'])
+                                formalidade_opcoes,
+                                index=formalidade_opcoes.index(formalidade_val)
                             )
+                            emojis_opcoes = ["Nenhum", "Moderado", "Alto"]
+                            emojis_val = st.session_state.perfil_durao_parametros.get('emojis', 'Nenhum')
+                            if emojis_val not in emojis_opcoes:
+                                emojis_val = 'Nenhum'
                             emojis = st.selectbox(
                                 "Uso de Emojis",
-                                ["Nenhum", "Moderado", "Alto"],
-                                index=["Nenhum", "Moderado", "Alto"].index(st.session_state.perfil_durao_parametros['emojis'])
+                                emojis_opcoes,
+                                index=emojis_opcoes.index(emojis_val)
                             )
+                            tom_opcoes = ["Durão", "Direto", "Motivacional"]
+                            tom_val = st.session_state.perfil_durao_parametros.get('tom', 'Durão')
+                            if tom_val not in tom_opcoes:
+                                tom_val = 'Durão'
                             tom = st.selectbox(
                                 "Tom",
-                                ["Durão", "Direto", "Motivacional"],
-                                index=["Durão", "Direto", "Motivacional"].index(st.session_state.perfil_durao_parametros['tom'])
+                                tom_opcoes,
+                                index=tom_opcoes.index(tom_val)
                             )
+                            foco_opcoes = ["Disciplina", "Resultados", "Cobrança"]
+                            foco_val = st.session_state.perfil_durao_parametros.get('foco', 'Disciplina')
+                            if foco_val not in foco_opcoes:
+                                foco_val = 'Disciplina'
                             foco = st.selectbox(
                                 "Foco",
-                                ["Disciplina", "Resultados", "Cobrança"],
-                                index=["Disciplina", "Resultados", "Cobrança"].index(st.session_state.perfil_durao_parametros['foco'])
+                                foco_opcoes,
+                                index=foco_opcoes.index(foco_val)
                             )
                             submit = st.form_submit_button("Salvar alterações")
                             if submit:
+                                print(f"[DEBUG] Valor de emojis selecionado no formulário (durona): {emojis}")
+                                personalidade_repo = PersonalidadeIARepository(DatabaseManager())
+                                emojis_valor = emojis if emojis else 'Nenhum'
+                                print(f"[DEBUG] Valor de emojis salvo no session_state (durona): {emojis_valor}")
                                 st.session_state.perfil_durao_parametros = {
                                     'formalidade': formalidade,
-                                    'emojis': emojis,
+                                    'emojis': emojis_valor,
                                     'tom': tom,
                                     'foco': foco
                                 }
+                                print(f"[DEBUG] Salvando no banco (durona): {emojis_valor}")
+                                personalidade_repo.salvar_personalidade(
+                                    user_id=user_id_db,
+                                    nome_perfil=perfil_nome_durao,
+                                    formalidade=formalidade,
+                                    uso_emojis=emojis_valor,
+                                    tom=tom,
+                                    foco=foco,
+                                    prompt_base=None
+                                )
                                 st.success("Parâmetros atualizados com sucesso!")
                     else:
                         st.markdown("""
@@ -335,25 +547,67 @@ def render_chat_interface(user_id: int):
 def process_user_message(user_id: int, message: str):
     """Processa mensagem do usuário e gera resposta"""
     try:
+        if user_id is None:
+            st.error("Usuário inválido. Não foi possível processar a mensagem.")
+            return
+        personalidade_repo = PersonalidadeIARepository(DatabaseManager())
         st.session_state.chat_history.append({
             'role': 'user',
             'content': message,
             'timestamp': datetime.now()
         })
         with st.spinner("🤖 Analisando..."):
+            # Definir nomes dos perfis
+            perfil_nome_amigavel = "Clara e Acolhedora"
+            perfil_nome_tecnico = "Técnico e Formal"
+            perfil_nome_durao = "Durão e Informal"
+            # Inicializar repositório
             personalidade = st.session_state.get('ai_personality', 'clara')
             data_inicio = st.session_state.get('ia_periodo_inicio', '') or ''
             data_fim = st.session_state.get('ia_periodo_fim', '') or ''
             qtd_transacoes = st.session_state.get('ia_qtd_transacoes', 50)
+
+            # Buscar características do perfil selecionado
+            if personalidade == 'clara':
+                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_amigavel)
+                params_ss = st.session_state.get('perfil_amigavel_parametros', {})
+                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                if params and (not params.get('emojis') or params.get('emojis') == ''):
+                    params['emojis'] = 'Nenhum'
+                print(f"[DEBUG] Valor de emojis usado para prompt/contexto (amigável): {params.get('emojis')}")
+            elif personalidade == 'tecnica':
+                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_tecnico)
+                params_ss = st.session_state.get('perfil_tecnico_parametros', {})
+                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                if params and (not params.get('emojis') or params.get('emojis') == ''):
+                    params['emojis'] = 'Nenhum'
+                print(f"[DEBUG] Valor de emojis usado para prompt/contexto (técnico): {params.get('emojis')}")
+            elif personalidade == 'durona':
+                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_durao)
+                params_ss = st.session_state.get('perfil_durao_parametros', {})
+                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                if params and (not params.get('emojis') or params.get('emojis') == ''):
+                    params['emojis'] = 'Nenhum'
+                print(f"[DEBUG] Valor de emojis usado para prompt/contexto (durona): {params.get('emojis')}")
+            else:
+                params = {}
+
+            # Montar prompt customizado
+            prompt_customizado = f"Formalidade: {params.get('formalidade', '')}\nEmojis: {params.get('emojis', '')}\nTom: {params.get('tom', '')}\nFoco: {params.get('foco', '')}"
+
             response_data = st.session_state.ai_assistant.process_message_with_personality(
-                user_id, message, personalidade, data_inicio, data_fim, qtd_transacoes
+                user_id, message, personalidade, data_inicio, data_fim, qtd_transacoes, prompt_customizado
             )
             response = response_data['response']
+            print(f"[DEBUG] Resposta da IA: {response}")
         st.session_state.chat_history.append({
             'role': 'assistant',
             'content': response,
-            'timestamp': datetime.now()
+            'timestamp': datetime.now(),
+            'prompt': response_data.get('prompt'),
+            'personalidade': response_data.get('personalidade')
         })
+        st.rerun()
     except Exception as e:
         st.error(f"Erro na interface de chat: {str(e)}")
 
@@ -558,7 +812,7 @@ def render_personality_selector():
             "durona": "💪 Mais durona e informal"
         }
         
-        st.markdown("### 🎭 Personalidade da IA")
+        st.markdown("### 🎭 Personalidade Assistente")
         
         # Obter personalidade atual
         personalidade_anterior = st.session_state.get('ai_personality', 'clara')
@@ -627,10 +881,11 @@ def main():
             st.session_state.ai_assistant = FinancialAIAssistant()
         
         # Obter ID do usuário
-        user_id = obter_user_id_do_usuario()
-        if not user_id:
+        user_id: Optional[int] = obter_user_id_do_usuario()
+        if user_id is None:
             st.error("❌ Não foi possível obter os dados do usuário")
             return
+        assert user_id is not None
         
         # --- Filtro de período na sidebar ---
         st.sidebar.header("🗓️ Período de Referência para a IA")
@@ -668,7 +923,7 @@ def main():
         # --- Fim do seletor ---
         
         # Configurar layout da página
-        st.title("🤖 Assistente IA")
+        st.title("Assistente Financeiro")
         
         # Dividir em duas colunas principais
         col1, col2 = st.columns([2.5, 1])

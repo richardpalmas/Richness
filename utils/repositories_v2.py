@@ -670,3 +670,47 @@ class ConversaIARepository(BaseRepository):
         """, [user_id, data_limite])
         
         return rows_affected
+
+class PersonalidadeIARepository(BaseRepository):
+    """Repository para operações com personalidades customizadas de IA do usuário"""
+    
+    def obter_personalidade(self, user_id: int, nome_perfil: str) -> Optional[Dict[str, Any]]:
+        result = self.db.executar_query(
+            "SELECT * FROM personalidades_ia_usuario WHERE user_id = ? AND nome_perfil = ?",
+            [user_id, nome_perfil]
+        )
+        return dict(result[0]) if result else None
+
+    def salvar_personalidade(self, user_id: int, nome_perfil: str, formalidade: str, uso_emojis: str, tom: str, foco: str, prompt_base: Optional[str] = None) -> int:
+        return self.db.executar_insert(
+            """
+            INSERT INTO personalidades_ia_usuario (user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, nome_perfil)
+            DO UPDATE SET formalidade = excluded.formalidade, uso_emojis = excluded.uso_emojis, tom = excluded.tom, foco = excluded.foco, prompt_base = excluded.prompt_base, updated_at = CURRENT_TIMESTAMP
+            """,
+            [user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base]
+        )
+
+    def atualizar_personalidade(self, user_id: int, nome_perfil: str, campos: Dict[str, Any]) -> int:
+        sets = []
+        params = []
+        for campo, valor in campos.items():
+            sets.append(f"{campo} = ?")
+            params.append(valor)
+        params.extend([user_id, nome_perfil])
+        query = f"UPDATE personalidades_ia_usuario SET {', '.join(sets)}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND nome_perfil = ?"
+        return self.db.executar_update(query, params)
+
+    def deletar_personalidade(self, user_id: int, nome_perfil: str) -> int:
+        return self.db.executar_update(
+            "DELETE FROM personalidades_ia_usuario WHERE user_id = ? AND nome_perfil = ?",
+            [user_id, nome_perfil]
+        )
+
+    def listar_personalidades_usuario(self, user_id: int) -> list:
+        result = self.db.executar_query(
+            "SELECT * FROM personalidades_ia_usuario WHERE user_id = ?",
+            [user_id]
+        )
+        return [dict(row) for row in result]
