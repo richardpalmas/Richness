@@ -62,7 +62,7 @@ def render_chat_interface(user_id: int):
             return NOMES_PADRAO[chave]
 
         # Criar abas de menu para a conversa com Assistente e Gerenciar Perfis IA
-        tabs = st.tabs(["💬 Conversar Com Assistente", "👤 Gerenciar Perfis IA"])
+        tabs = st.tabs(["💬 Conversar Com Assistente", "👤 Gerenciar Perfis IA", "✨ Criar Perfil IA"])
         with tabs[0]:
             # Exibir período selecionado acima do chat
             data_inicio = st.session_state.get('ia_periodo_inicio', '')
@@ -626,6 +626,142 @@ def render_chat_interface(user_id: int):
                                     <b>Descrição:</b> Ideal para quem gosta de uma abordagem mais dura, com cobranças e incentivos diretos para alcançar metas financeiras.</p>
                             </div>
                         """, unsafe_allow_html=True)
+        with tabs[2]:
+            st.markdown("### ✨ Criar Novo Perfil IA")
+            with st.form("form_criar_perfil_ia"):
+                nome_perfil = st.text_input(
+                    "Nome do Perfil",
+                    max_chars=20,
+                    help="Dê um nome para o novo perfil de IA (ex: Consultor Investimentos)"
+                )
+                foto_perfil = st.session_state.get('foto_perfil_criacao', None)
+                col_img, col_upload = st.columns([0.6, 7.4])
+                with col_img:
+                    st.markdown("<div style='display: flex; align-items: center; height: 100%; justify-content: center;'>", unsafe_allow_html=True)
+                    if foto_perfil is not None:
+                        st.image(foto_perfil, caption="", width=64)
+                    else:
+                        st.image("imgs/perfil_tecnico_masc.png", caption="", width=64)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with col_upload:
+                    uploaded_file = st.file_uploader(
+                        "Foto do Perfil (opcional)",
+                        type=["png", "jpg", "jpeg"],
+                        help="Carregue uma foto para o perfil. Se não carregar, será usada a foto padrão."
+                    )
+                    if uploaded_file is not None:
+                        st.session_state['foto_perfil_criacao'] = uploaded_file
+                        foto_perfil = uploaded_file
+                st.markdown("---")
+                st.markdown("#### Prompt Base do Assistente Financeiro")
+                prompt_base = (
+                    "Você é um assistente financeiro inteligente, capaz de responder dúvidas, dar dicas e analisar dados financeiros do usuário. "
+                    "Personalize seu atendimento conforme os parâmetros abaixo."
+                )
+                st.code(prompt_base, language="markdown")
+                st.markdown("---")
+                st.markdown("#### Defina as Características da sua IA (Básico)")
+                idioma = st.selectbox("Idioma", ["Português", "Inglês", "Espanhol"], index=0)
+                amigavel = st.selectbox("Amigável", ["Não", "Sim", "Muito"], index=1)
+                formalidade = st.selectbox("Formalidade", ["Informal", "Neutro", "Formal"], index=1)
+                uso_emojis = st.selectbox("Uso de Emojis", ["Nenhum", "Moderado", "Alto"], index=1)
+                tom = st.selectbox("Tom", ["Neutro", "Amigável", "Objetivo", "Durão", "Motivacional"], index=0)
+                foco = st.selectbox("Foco", ["Neutro", "Motivacional", "Analítico", "Disciplina", "Cobrança"], index=0)
+                # Novos parâmetros avançados
+                st.markdown("---")
+                st.markdown("#### Defina as Características da sua IA (Avançado)")
+                arquetipo = st.selectbox(
+                    "Arquetipo",
+                    ["", "Coach motivacional", "Mentor cauteloso", "Parceiro informal"],
+                    index=0,
+                    help="Escolha o arquétipo principal do assistente."
+                )
+                tom_voz = st.selectbox(
+                    "Tom de voz",
+                    ["", "Amigável", "Formal", "Inspirador"],
+                    index=0,
+                    help="Como o assistente soa ao conversar."
+                )
+                estilo_comunicacao = st.selectbox(
+                    "Estilo de comunicação",
+                    ["", "Sintético e direto", "Explicativo (passo-a-passo)", "Cheio de analogias"],
+                    index=0,
+                    help="Forma como as respostas são estruturadas."
+                )
+                nivel_humor = st.selectbox(
+                    "Nível de humor",
+                    ["", "Sério", "Leve (toques de piada)", "Sarcástico (com cuidado)"],
+                    index=0,
+                    help="Quanto humor o assistente utiliza."
+                )
+                empatia = st.selectbox(
+                    "Empatia",
+                    ["", "Altíssima (aconselha e conforta)", "Média (foca em dados)", "Baixa (apenas fact-check)"],
+                    index=0,
+                    help="Nível de empatia nas respostas."
+                )
+                autoridade_conselho = st.selectbox(
+                    "Autoridade/tom de conselho",
+                    ["", "Eu recomendo", "Você pode", "Que tal tentarmos…?"],
+                    index=0,
+                    help="Como o assistente sugere ações."
+                )
+                profundidade_expertise = st.selectbox(
+                    "Profundidade de expertise",
+                    ["", "Básico (educação financeira 101)", "Intermediário (planejamento mensal)", "Avançado (investimentos complexos)"],
+                    index=0,
+                    help="Nível de profundidade das respostas."
+                )
+                perfil_risco = st.selectbox(
+                    "Perfil de risco internalizado",
+                    ["", "Conservador", "Moderado", "Arrojado"],
+                    index=0,
+                    help="Tendência do assistente ao sugerir estratégias."
+                )
+                motivacao_call = st.selectbox(
+                    "Motivação e call-to-action",
+                    ["", "Gatilhos de positividade (👏 Você mandou bem!)", "Gatilhos de desafio (Será que você consegue economizar 10% a mais?)", "Gatilhos de urgência (Faltam 3 dias para fechar o mês!)"],
+                    index=0,
+                    help="Tipo de incentivo usado pelo assistente."
+                )
+                regionalismo = st.selectbox(
+                    "Regionalismo",
+                    ["", "Gírias paulistas", "Gírias cariocas", "Nordestino arretado", "Mineirês", "Goianês", "Gaúcho raiz", "Sem regionalismo"],
+                    index=0,
+                    help="Escolha um estilo regional de comunicação."
+                )
+                cultura = st.selectbox(
+                    "Cultura",
+                    ["", "Hippie", "Rockeiro", "Geek", "Amante do Futebol", "Religioso"],
+                    index=0,
+                    help="Escolha um traço cultural para o perfil da IA."
+                )
+                valores_centrais = st.selectbox(
+                    "Valores centrais",
+                    ["", "Frugalidade", "Liberdade financeira", "Consumo consciente", "Legado"],
+                    index=0,
+                    help="Valor principal transmitido pelo assistente."
+                )
+                reacao_fracasso = st.selectbox(
+                    "Reação ao fracasso",
+                    ["", "Comfort-coach (abraço e recomeço)", "Realista (análise fria dos números)", "Tough love (puxa a orelha)"],
+                    index=0,
+                    help="Como o assistente reage a resultados negativos."
+                )
+                submit = st.form_submit_button("Criar Perfil IA")
+                if submit:
+                    erros = []
+                    nome_perfil_val = nome_perfil.strip()
+                    if len(nome_perfil_val) == 0:
+                        erros.append("O nome do perfil não pode ser vazio.")
+                    if len(nome_perfil) > 20:
+                        erros.append("O nome do perfil deve ter no máximo 20 caracteres.")
+                    if erros:
+                        for erro in erros:
+                            st.error(erro)
+                    else:
+                        st.success("Perfil IA criado (simulação). Em breve será possível salvar e usar este perfil no chat.")
+                        st.info(f"Nome: {nome_perfil}\nIdioma: {idioma}\nAmigável: {amigavel}\nFormalidade: {formalidade}\nEmojis: {uso_emojis}\nTom: {tom}\nFoco: {foco}\nArquetipo: {arquetipo}\nTom de voz: {tom_voz}\nEstilo de comunicação: {estilo_comunicacao}\nNível de humor: {nivel_humor}\nEmpatia: {empatia}\nAutoridade/tom de conselho: {autoridade_conselho}\nProfundidade de expertise: {profundidade_expertise}\nPerfil de risco: {perfil_risco}\nMotivação/call-to-action: {motivacao_call}\nRegionalismo: {regionalismo}\nCultura: {cultura}\nValores centrais: {valores_centrais}\nReação ao fracasso: {reacao_fracasso}")
     except Exception as e:
         st.error(f"Erro na interface de chat: {str(e)}")
 
