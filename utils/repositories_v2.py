@@ -681,15 +681,15 @@ class PersonalidadeIARepository(BaseRepository):
         )
         return dict(result[0]) if result else None
 
-    def salvar_personalidade(self, user_id: int, nome_perfil: str, formalidade: str, uso_emojis: str, tom: str, foco: str, prompt_base: Optional[str] = None) -> int:
+    def salvar_personalidade(self, user_id: int, nome_perfil: str, formalidade: str, uso_emojis: str, tom: str, foco: str, prompt_base: Optional[str] = None, nome_customizado: Optional[str] = None) -> int:
         return self.db.executar_insert(
             """
-            INSERT INTO personalidades_ia_usuario (user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO personalidades_ia_usuario (user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base, nome_customizado)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, nome_perfil)
-            DO UPDATE SET formalidade = excluded.formalidade, uso_emojis = excluded.uso_emojis, tom = excluded.tom, foco = excluded.foco, prompt_base = excluded.prompt_base, updated_at = CURRENT_TIMESTAMP
+            DO UPDATE SET formalidade = excluded.formalidade, uso_emojis = excluded.uso_emojis, tom = excluded.tom, foco = excluded.foco, prompt_base = excluded.prompt_base, nome_customizado = excluded.nome_customizado, updated_at = CURRENT_TIMESTAMP
             """,
-            [user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base]
+            [user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base, nome_customizado]
         )
 
     def atualizar_personalidade(self, user_id: int, nome_perfil: str, campos: Dict[str, Any]) -> int:
