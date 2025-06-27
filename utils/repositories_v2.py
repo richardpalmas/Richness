@@ -681,15 +681,26 @@ class PersonalidadeIARepository(BaseRepository):
         )
         return dict(result[0]) if result else None
 
-    def salvar_personalidade(self, user_id: int, nome_perfil: str, formalidade: str, uso_emojis: str, tom: str, foco: str, prompt_base: Optional[str] = None, nome_customizado: Optional[str] = None) -> int:
+    def salvar_personalidade_completa(self, user_id: int, nome_perfil: str, dados: dict) -> int:
+        # Todos os campos possíveis
+        campos = [
+            'foto_path', 'idioma', 'amigavel', 'regionalismo', 'cultura', 'formalidade', 'uso_emojis', 'tom', 'foco',
+            'arquetipo', 'tom_voz', 'estilo_comunicacao', 'nivel_humor', 'empatia', 'autoridade_conselho',
+            'profundidade_expertise', 'perfil_risco', 'motivacao_call', 'valores_centrais', 'reacao_fracasso',
+            'prompt_base', 'nome_customizado'
+        ]
+        colunas = ', '.join(['user_id', 'nome_perfil'] + campos)
+        placeholders = ', '.join(['?'] * (2 + len(campos)))
+        update_set = ', '.join([f"{campo} = excluded.{campo}" for campo in campos])
+        values = [user_id, nome_perfil] + [dados.get(campo) for campo in campos]
         return self.db.executar_insert(
-            """
-            INSERT INTO personalidades_ia_usuario (user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base, nome_customizado)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            f"""
+            INSERT INTO personalidades_ia_usuario ({colunas})
+            VALUES ({placeholders})
             ON CONFLICT(user_id, nome_perfil)
-            DO UPDATE SET formalidade = excluded.formalidade, uso_emojis = excluded.uso_emojis, tom = excluded.tom, foco = excluded.foco, prompt_base = excluded.prompt_base, nome_customizado = excluded.nome_customizado, updated_at = CURRENT_TIMESTAMP
+            DO UPDATE SET {update_set}, updated_at = CURRENT_TIMESTAMP
             """,
-            [user_id, nome_perfil, formalidade, uso_emojis, tom, foco, prompt_base, nome_customizado]
+            values
         )
 
     def atualizar_personalidade(self, user_id: int, nome_perfil: str, campos: Dict[str, Any]) -> int:

@@ -10,6 +10,7 @@ import pandas as pd
 from typing import Optional
 import json
 import os
+import uuid
 
 from utils.auth import verificar_autenticacao
 from services.ai_assistant_service import FinancialAIAssistant
@@ -95,34 +96,75 @@ def render_chat_interface(user_id: int):
 
             # Parâmetros atuais da personalidade
             params = {}
-            if personalidade == 'clara':
-                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_amigavel)
-                params_ss = st.session_state.get('perfil_amigavel_parametros', {})
-                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
-                if params and (not params.get('emojis') or params.get('emojis') == ''):
-                    params['emojis'] = 'Nenhum'
-            elif personalidade == 'tecnica':
-                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_tecnico)
-                params_ss = st.session_state.get('perfil_tecnico_parametros', {})
-                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
-                if params and (not params.get('emojis') or params.get('emojis') == ''):
-                    params['emojis'] = 'Nenhum'
-            elif personalidade == 'durona':
-                params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_durao)
-                params_ss = st.session_state.get('perfil_durao_parametros', {})
-                params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
-                if params and (not params.get('emojis') or params.get('emojis') == ''):
-                    params['emojis'] = 'Nenhum'
+            if personalidade in ['clara', 'tecnica', 'durona']:
+                avatar_path = avatar_map.get(personalidade, 'imgs/perfil_amigavel_fem.png')
+                params = {}
+                if personalidade == 'clara':
+                    params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_amigavel)
+                    params_ss = st.session_state.get('perfil_amigavel_parametros', {})
+                    params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                    if params and (not params.get('emojis') or params.get('emojis') == ''):
+                        params['emojis'] = 'Nenhum'
+                elif personalidade == 'tecnica':
+                    params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_tecnico)
+                    params_ss = st.session_state.get('perfil_tecnico_parametros', {})
+                    params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                    if params and (not params.get('emojis') or params.get('emojis') == ''):
+                        params['emojis'] = 'Nenhum'
+                elif personalidade == 'durona':
+                    params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_durao)
+                    params_ss = st.session_state.get('perfil_durao_parametros', {})
+                    params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+                    if params and (not params.get('emojis') or params.get('emojis') == ''):
+                        params['emojis'] = 'Nenhum'
+            else:
+                # Perfil customizado
+                perfil_custom = next((p for p in st.session_state.get('perfis_customizados', []) if p.get('nome_perfil') == personalidade), None)
+                if perfil_custom:
+                    avatar_path = perfil_custom.get('foto_path') if perfil_custom.get('foto_path') and os.path.exists(perfil_custom.get('foto_path', '')) else 'imgs/perfil_tecnico_masc.png'
+                    params = {
+                        'formalidade': perfil_custom.get('formalidade', ''),
+                        'emojis': perfil_custom.get('uso_emojis', ''),
+                        'tom': perfil_custom.get('tom', ''),
+                        'foco': perfil_custom.get('foco', '')
+                    }
+                else:
+                    avatar_path = 'imgs/perfil_tecnico_masc.png'
+                    params = {}
 
             # Card visual dos parâmetros
-            if params:
-                st.markdown(f'''
+            if personalidade in ['clara', 'tecnica', 'durona']:
+                if params:
+                    st.markdown(f'''
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 12px 18px; border-radius: 12px; color: #fff; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-size: 15px;">
     <b>Personalidade:</b> {personalidade.capitalize()}<br>
     <b>Formalidade:</b> {params.get('formalidade', '')} &nbsp;|&nbsp;
     <b>Emojis:</b> {params.get('emojis', 'Nenhum')} &nbsp;|&nbsp;
     <b>Tom:</b> {params.get('tom', '')} &nbsp;|&nbsp;
     <b>Foco:</b> {params.get('foco', '')}
+</div>
+''', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'''
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 12px 18px; border-radius: 12px; color: #fff; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-size: 15px;">
+    <b>Personalidade:</b> {personalidade.capitalize()}<br>
+    <b>Formalidade:</b> {params.get('formalidade', '')} &nbsp;|&nbsp;
+    <b>Emojis:</b> {params.get('emojis', 'Nenhum')} &nbsp;|&nbsp;
+    <b>Tom:</b> {params.get('tom', '')} &nbsp;|&nbsp;
+    <b>Foco:</b> {params.get('foco', '')}
+</div>
+''', unsafe_allow_html=True)
+            else:
+                perfil_custom = next((p for p in st.session_state.get('perfis_customizados', []) if p.get('nome_perfil') == personalidade), None)
+                if perfil_custom:
+                    st.markdown(f'''
+<div style="background: linear-gradient(135deg, #232526 0%, #414345 100%); padding: 12px 18px; border-radius: 12px; color: #fff; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-size: 15px;">
+    <b>Personalidade:</b> {perfil_custom.get('nome_customizado', perfil_custom.get('nome_perfil'))}<br>
+    <b>Descrição:</b> {perfil_custom.get('descricao_curta', '')}<br>
+    <b>Formalidade:</b> {perfil_custom.get('formalidade', '')} &nbsp;|&nbsp;
+    <b>Emojis:</b> {perfil_custom.get('uso_emojis', '')} &nbsp;|&nbsp;
+    <b>Tom:</b> {perfil_custom.get('tom', '')} &nbsp;|&nbsp;
+    <b>Foco:</b> {perfil_custom.get('foco', '')}
 </div>
 ''', unsafe_allow_html=True)
 
@@ -312,22 +354,19 @@ def render_chat_interface(user_id: int):
                                 personalidade_repo = PersonalidadeIARepository(DatabaseManager())
                                 emojis_valor = emojis if emojis else 'Nenhum'
                                 print(f"[DEBUG] Valor de emojis salvo no session_state (amigável): {emojis_valor}")
-                                st.session_state.perfil_amigavel_parametros = {
+                                dados_amigavel = {
                                     'formalidade': formalidade,
-                                    'emojis': emojis_valor,
+                                    'uso_emojis': emojis_valor,
                                     'tom': tom,
-                                    'foco': foco
+                                    'foco': foco,
+                                    'prompt_base': None,
+                                    'nome_customizado': nome_input.strip()
                                 }
                                 print(f"[DEBUG] Salvando no banco (amigável): {emojis_valor}")
-                                personalidade_repo.salvar_personalidade(
+                                personalidade_repo.salvar_personalidade_completa(
                                     user_id=user_id_db,
                                     nome_perfil=perfil_nome_amigavel,
-                                    formalidade=formalidade,
-                                    uso_emojis=emojis_valor,
-                                    tom=tom,
-                                    foco=foco,
-                                    prompt_base=None,
-                                    nome_customizado=nome_input.strip()
+                                    dados=dados_amigavel
                                 )
                                 st.session_state['nome_amigavel'] = nome_input.strip()
                                 st.success("Parâmetros atualizados com sucesso!")
@@ -453,22 +492,19 @@ def render_chat_interface(user_id: int):
                                 personalidade_repo = PersonalidadeIARepository(DatabaseManager())
                                 emojis_valor = emojis if emojis else 'Nenhum'
                                 print(f"[DEBUG] Valor de emojis salvo no session_state (técnico): {emojis_valor}")
-                                st.session_state.perfil_tecnico_parametros = {
+                                dados_tecnico = {
                                     'formalidade': formalidade,
-                                    'emojis': emojis_valor,
+                                    'uso_emojis': emojis_valor,
                                     'tom': tom,
-                                    'foco': foco
+                                    'foco': foco,
+                                    'prompt_base': None,
+                                    'nome_customizado': nome_input.strip()
                                 }
                                 print(f"[DEBUG] Salvando no banco (técnico): {emojis_valor}")
-                                personalidade_repo.salvar_personalidade(
+                                personalidade_repo.salvar_personalidade_completa(
                                     user_id=user_id_db,
                                     nome_perfil=perfil_nome_tecnico,
-                                    formalidade=formalidade,
-                                    uso_emojis=emojis_valor,
-                                    tom=tom,
-                                    foco=foco,
-                                    prompt_base=None,
-                                    nome_customizado=nome_input.strip()
+                                    dados=dados_tecnico
                                 )
                                 st.session_state['nome_tecnico'] = nome_input.strip()
                                 st.success("Parâmetros atualizados com sucesso!")
@@ -593,22 +629,19 @@ def render_chat_interface(user_id: int):
                                 personalidade_repo = PersonalidadeIARepository(DatabaseManager())
                                 emojis_valor = emojis if emojis else 'Nenhum'
                                 print(f"[DEBUG] Valor de emojis salvo no session_state (durona): {emojis_valor}")
-                                st.session_state.perfil_durao_parametros = {
+                                dados_durao = {
                                     'formalidade': formalidade,
-                                    'emojis': emojis_valor,
+                                    'uso_emojis': emojis_valor,
                                     'tom': tom,
-                                    'foco': foco
+                                    'foco': foco,
+                                    'prompt_base': None,
+                                    'nome_customizado': nome_input.strip()
                                 }
                                 print(f"[DEBUG] Salvando no banco (durona): {emojis_valor}")
-                                personalidade_repo.salvar_personalidade(
+                                personalidade_repo.salvar_personalidade_completa(
                                     user_id=user_id_db,
                                     nome_perfil=perfil_nome_durao,
-                                    formalidade=formalidade,
-                                    uso_emojis=emojis_valor,
-                                    tom=tom,
-                                    foco=foco,
-                                    prompt_base=None,
-                                    nome_customizado=nome_input.strip()
+                                    dados=dados_durao
                                 )
                                 st.session_state['nome_durao'] = nome_input.strip()
                                 st.success("Parâmetros atualizados com sucesso!")
@@ -626,6 +659,154 @@ def render_chat_interface(user_id: int):
                                     <b>Descrição:</b> Ideal para quem gosta de uma abordagem mais dura, com cobranças e incentivos diretos para alcançar metas financeiras.</p>
                             </div>
                         """, unsafe_allow_html=True)
+
+            # --- Listagem de Perfis Customizados ---
+            st.markdown("---")
+            st.markdown("#### 👤 Perfis Customizados Criados por Você")
+            personalidade_repo = PersonalidadeIARepository(DatabaseManager())
+            perfis_customizados = []
+            if 'perfis_customizados' in st.session_state and st.session_state['perfis_customizados']:
+                perfis_customizados = [p for p in st.session_state['perfis_customizados'] if p.get('tipo') == 'customizado']
+            elif user_id:
+                perfis_customizados = [p for p in personalidade_repo.listar_personalidades_usuario(user_id) if p.get('tipo') == 'customizado']
+            if not perfis_customizados:
+                st.info("Você ainda não criou perfis customizados. Use a aba 'Criar Perfil IA' para adicionar um novo perfil.")
+            else:
+                for idx, perfil in enumerate(perfis_customizados):
+                    col_img, col_info, col_acoes = st.columns([1, 3, 1])
+                    with col_img:
+                        if perfil.get('foto_path') and os.path.exists(perfil['foto_path']):
+                            st.image(perfil['foto_path'], width=64)
+                        else:
+                            st.image("imgs/perfil_tecnico_masc.png", width=64)
+                    with col_info:
+                        st.markdown(f"""
+                        <div style='background: linear-gradient(135deg, #232526 0%, #414345 100%); padding: 16px; border-radius: 12px; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08);'>
+                            <b>Nome:</b> {perfil.get('nome_customizado', perfil.get('nome_perfil'))}<br>
+                            <b>Idioma:</b> {perfil.get('idioma', '')} &nbsp;|&nbsp; <b>Tom:</b> {perfil.get('tom', '')} &nbsp;|&nbsp; <b>Foco:</b> {perfil.get('foco', '')}<br>
+                            <b>Formalidade:</b> {perfil.get('formalidade', '')} &nbsp;|&nbsp; <b>Emojis:</b> {perfil.get('uso_emojis', '')}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col_acoes:
+                        editar_key = f"editar_customizado_{idx}"
+                        excluir_key = f"excluir_customizado_{idx}"
+                        if st.button("✏️ Editar", key=editar_key):
+                            st.session_state['editar_perfil_customizado'] = perfil['nome_perfil']
+                        if st.button("🗑️ Excluir", key=excluir_key):
+                            st.session_state['excluir_perfil_customizado'] = perfil['nome_perfil']
+                    # --- Formulário de edição ---
+                    if st.session_state.get('editar_perfil_customizado') == perfil['nome_perfil']:
+                        with st.form(f"form_editar_customizado_{idx}"):
+                            # Foto atual
+                            st.markdown("**Foto do Perfil**")
+                            foto_atual = perfil.get('foto_path') if perfil.get('foto_path') and os.path.exists(perfil['foto_path']) else None
+                            col_foto, col_upload, col_remover = st.columns([1, 4, 2])
+                            with col_foto:
+                                if foto_atual:
+                                    st.image(foto_atual, width=64)
+                                else:
+                                    st.image("imgs/perfil_tecnico_masc.png", width=64)
+                            with col_upload:
+                                uploaded_file = st.file_uploader(
+                                    "Alterar foto (PNG/JPG/JPEG)",
+                                    type=["png", "jpg", "jpeg"],
+                                    key=f"file_uploader_edit_{idx}",
+                                    help="Carregue uma nova foto para substituir a atual."
+                                )
+                            with col_remover:
+                                remover_foto = st.checkbox("Remover foto", key=f"remover_foto_{idx}")
+                            nome_input = st.text_input("Nome do Perfil", value=perfil.get('nome_customizado', perfil.get('nome_perfil')), max_chars=20)
+                            idioma = st.selectbox("Idioma", ["Português", "Inglês", "Espanhol"], index=["Português", "Inglês", "Espanhol"].index(perfil.get('idioma', 'Português')))
+                            amigavel = st.selectbox("Amigável", ["Não", "Sim", "Muito"], index=["Não", "Sim", "Muito"].index(perfil.get('amigavel', 'Sim')))
+                            formalidade = st.selectbox("Formalidade", ["Informal", "Neutro", "Formal"], index=["Informal", "Neutro", "Formal"].index(perfil.get('formalidade', 'Neutro')))
+                            uso_emojis = st.selectbox("Uso de Emojis", ["Nenhum", "Moderado", "Alto"], index=["Nenhum", "Moderado", "Alto"].index(perfil.get('uso_emojis', 'Moderado')))
+                            tom = st.selectbox("Tom", ["Neutro", "Amigável", "Objetivo", "Durão", "Motivacional"], index=["Neutro", "Amigável", "Objetivo", "Durão", "Motivacional"].index(perfil.get('tom', 'Neutro')))
+                            foco = st.selectbox("Foco", ["Neutro", "Motivacional", "Analítico", "Disciplina", "Cobrança"], index=["Neutro", "Motivacional", "Analítico", "Disciplina", "Cobrança"].index(perfil.get('foco', 'Neutro')))
+                            regionalismo = st.selectbox("Regionalismo", ["", "Gírias paulistas", "Gírias cariocas", "Nordestino arretado", "Mineirês", "Goianês", "Gaúcho raiz", "Sem regionalismo"], index=max(0, ["", "Gírias paulistas", "Gírias cariocas", "Nordestino arretado", "Mineirês", "Goianês", "Gaúcho raiz", "Sem regionalismo"].index(perfil.get('regionalismo', ''))))
+                            cultura = st.selectbox("Cultura", ["", "Hippie", "Rockeiro", "Geek", "Amante do Futebol", "Religioso"], index=max(0, ["", "Hippie", "Rockeiro", "Geek", "Amante do Futebol", "Religioso"].index(perfil.get('cultura', ''))))
+                            arquetipo = st.selectbox("Arquetipo", ["", "Coach motivacional", "Mentor cauteloso", "Parceiro informal"], index=max(0, ["", "Coach motivacional", "Mentor cauteloso", "Parceiro informal"].index(perfil.get('arquetipo', ''))))
+                            tom_voz = st.selectbox("Tom de voz", ["", "Amigável", "Formal", "Inspirador"], index=max(0, ["", "Amigável", "Formal", "Inspirador"].index(perfil.get('tom_voz', ''))))
+                            estilo_comunicacao = st.selectbox("Estilo de comunicação", ["", "Sintético e direto", "Explicativo (passo-a-passo)", "Cheio de analogias"], index=max(0, ["", "Sintético e direto", "Explicativo (passo-a-passo)", "Cheio de analogias"].index(perfil.get('estilo_comunicacao', ''))))
+                            nivel_humor = st.selectbox("Nível de humor", ["", "Sério", "Leve (toques de piada)", "Sarcástico (com cuidado)"], index=max(0, ["", "Sério", "Leve (toques de piada)", "Sarcástico (com cuidado)"].index(perfil.get('nivel_humor', ''))))
+                            empatia = st.selectbox("Empatia", ["", "Altíssima (aconselha e conforta)", "Média (foca em dados)", "Baixa (apenas fact-check)"], index=max(0, ["", "Altíssima (aconselha e conforta)", "Média (foca em dados)", "Baixa (apenas fact-check)"].index(perfil.get('empatia', ''))))
+                            autoridade_conselho = st.selectbox("Autoridade/tom de conselho", ["", "Eu recomendo", "Você pode", "Que tal tentarmos…?"], index=max(0, ["", "Eu recomendo", "Você pode", "Que tal tentarmos…?"].index(perfil.get('autoridade_conselho', ''))))
+                            profundidade_expertise = st.selectbox("Profundidade de expertise", ["", "Básico (educação financeira 101)", "Intermediário (planejamento mensal)", "Avançado (investimentos complexos)"], index=max(0, ["", "Básico (educação financeira 101)", "Intermediário (planejamento mensal)", "Avançado (investimentos complexos)"].index(perfil.get('profundidade_expertise', ''))))
+                            perfil_risco = st.selectbox("Perfil de risco internalizado", ["", "Conservador", "Moderado", "Arrojado"], index=max(0, ["", "Conservador", "Moderado", "Arrojado"].index(perfil.get('perfil_risco', ''))))
+                            motivacao_call = st.selectbox("Motivação e call-to-action", ["", "Gatilhos de positividade (👏 Você mandou bem!)", "Gatilhos de desafio (Será que você consegue economizar 10% a mais?)", "Gatilhos de urgência (Faltam 3 dias para fechar o mês!)"], index=max(0, ["", "Gatilhos de positividade (👏 Você mandou bem!)", "Gatilhos de desafio (Será que você consegue economizar 10% a mais?)", "Gatilhos de urgência (Faltam 3 dias para fechar o mês!)"].index(perfil.get('motivacao_call', ''))))
+                            valores_centrais = st.selectbox("Valores centrais", ["", "Frugalidade", "Liberdade financeira", "Consumo consciente", "Legado"], index=max(0, ["", "Frugalidade", "Liberdade financeira", "Consumo consciente", "Legado"].index(perfil.get('valores_centrais', ''))))
+                            reacao_fracasso = st.selectbox("Reação ao fracasso", ["", "Comfort-coach (abraço e recomeço)", "Realista (análise fria dos números)", "Tough love (puxa a orelha)"], index=max(0, ["", "Comfort-coach (abraço e recomeço)", "Realista (análise fria dos números)", "Tough love (puxa a orelha)"].index(perfil.get('reacao_fracasso', ''))))
+                            submit_editar = st.form_submit_button("Salvar alterações")
+                            cancelar_editar = st.form_submit_button("Cancelar")
+                            if submit_editar:
+                                nome_final = nome_input.strip() if nome_input else ''
+                                foto_path_final = perfil.get('foto_path')
+                                if remover_foto:
+                                    foto_path_final = None
+                                elif uploaded_file is not None:
+                                    ext = os.path.splitext(uploaded_file.name)[-1]
+                                    nome_arquivo = f"perfil_ia_{user_id}_{uuid.uuid4().hex}{ext}"
+                                    pasta = "profile_pics"
+                                    os.makedirs(pasta, exist_ok=True)
+                                    caminho = os.path.join(pasta, nome_arquivo)
+                                    with open(caminho, "wb") as f:
+                                        f.write(uploaded_file.getbuffer())
+                                    foto_path_final = caminho
+                                dados_atualizados = {
+                                    'nome_customizado': nome_final,
+                                    'idioma': idioma,
+                                    'amigavel': amigavel,
+                                    'formalidade': formalidade,
+                                    'uso_emojis': uso_emojis,
+                                    'tom': tom,
+                                    'foco': foco,
+                                    'regionalismo': regionalismo,
+                                    'cultura': cultura,
+                                    'arquetipo': arquetipo,
+                                    'tom_voz': tom_voz,
+                                    'estilo_comunicacao': estilo_comunicacao,
+                                    'nivel_humor': nivel_humor,
+                                    'empatia': empatia,
+                                    'autoridade_conselho': autoridade_conselho,
+                                    'profundidade_expertise': profundidade_expertise,
+                                    'perfil_risco': perfil_risco,
+                                    'motivacao_call': motivacao_call,
+                                    'valores_centrais': valores_centrais,
+                                    'reacao_fracasso': reacao_fracasso,
+                                    'foto_path': foto_path_final
+                                }
+                                personalidade_repo.atualizar_personalidade(user_id, perfil['nome_perfil'], dados_atualizados)
+                                # Atualizar apenas o perfil editado no session_state
+                                for i, p in enumerate(st.session_state['perfis_customizados']):
+                                    if p['nome_perfil'] == perfil['nome_perfil']:
+                                        st.session_state['perfis_customizados'][i].update(dados_atualizados)
+                                        break
+                                st.session_state['editar_perfil_customizado'] = None
+                                st.success("Perfil atualizado com sucesso!")
+                                st.rerun()
+                            if cancelar_editar:
+                                st.session_state['editar_perfil_customizado'] = None
+                    # --- Confirmação de exclusão ---
+                    if st.session_state.get('excluir_perfil_customizado') == perfil['nome_perfil']:
+                        st.warning(f"Tem certeza que deseja excluir o perfil '{perfil.get('nome_customizado', perfil.get('nome_perfil'))}'? Esta ação não pode ser desfeita.")
+                        col_conf1, col_conf2 = st.columns(2)
+                        with col_conf1:
+                            if st.button("Confirmar Exclusão", key=f"confirma_excluir_{idx}"):
+                                personalidade_repo.deletar_personalidade(user_id, perfil['nome_perfil'])
+                                # Se o perfil excluído estava selecionado, voltar para 'clara'
+                                if st.session_state.get('ai_personality') == perfil['nome_perfil']:
+                                    st.session_state['ai_personality'] = 'clara'
+                                # Remover do session_state manualmente
+                                st.session_state['perfis_customizados'] = [
+                                    p for p in st.session_state['perfis_customizados']
+                                    if p['nome_perfil'] != perfil['nome_perfil']
+                                ]
+                                st.session_state['excluir_perfil_customizado'] = None
+                                st.success("Perfil excluído com sucesso!")
+                                st.rerun()
+                        with col_conf2:
+                            if st.button("Cancelar", key=f"cancela_excluir_{idx}"):
+                                st.session_state['excluir_perfil_customizado'] = None
+            st.markdown("---")
         with tabs[2]:
             st.markdown("### ✨ Criar Novo Perfil IA")
             with st.form("form_criar_perfil_ia"):
@@ -633,6 +814,11 @@ def render_chat_interface(user_id: int):
                     "Nome do Perfil",
                     max_chars=20,
                     help="Dê um nome para o novo perfil de IA (ex: Consultor Investimentos)"
+                )
+                descricao_curta = st.text_input(
+                    "Descrição curta do perfil",
+                    max_chars=50,
+                    help="Breve descrição (ex: Conselheiro motivacional, Padre Nicolau, etc.)"
                 )
                 foto_perfil = st.session_state.get('foto_perfil_criacao', None)
                 col_img, col_upload = st.columns([0.6, 7.4])
@@ -752,16 +938,81 @@ def render_chat_interface(user_id: int):
                 if submit:
                     erros = []
                     nome_perfil_val = nome_perfil.strip()
+                    descricao_curta_val = descricao_curta.strip()
                     if len(nome_perfil_val) == 0:
                         erros.append("O nome do perfil não pode ser vazio.")
                     if len(nome_perfil) > 20:
                         erros.append("O nome do perfil deve ter no máximo 20 caracteres.")
+                    if len(descricao_curta_val) == 0:
+                        erros.append("A descrição curta não pode ser vazia.")
+                    if len(descricao_curta_val) > 50:
+                        erros.append("A descrição curta deve ter no máximo 50 caracteres.")
+                    # Validação dos campos obrigatórios (básico)
+                    if not idioma or not amigavel or not formalidade or not uso_emojis or not tom or not foco:
+                        erros.append("Preencha todos os campos obrigatórios da seção 'Básico'.")
+                    # Limite de perfis customizados
+                    personalidade_repo = PersonalidadeIARepository(DatabaseManager())
+                    perfis_customizados = [p for p in personalidade_repo.listar_personalidades_usuario(user_id) if p.get('tipo') == 'customizado']
+                    if len(perfis_customizados) >= 3:
+                        erros.append("Limite de 3 perfis customizados atingido. Exclua um perfil para criar outro.")
+                    # Impedir duplicidade de nomes
+                    if 'perfis_customizados' in st.session_state:
+                        if any(p.get('nome_perfil') == nome_perfil_val for p in st.session_state['perfis_customizados']):
+                            erros.append("Já existe um perfil com esse nome. Escolha outro nome.")
                     if erros:
                         for erro in erros:
                             st.error(erro)
                     else:
-                        st.success("Perfil IA criado (simulação). Em breve será possível salvar e usar este perfil no chat.")
-                        st.info(f"Nome: {nome_perfil}\nIdioma: {idioma}\nAmigável: {amigavel}\nFormalidade: {formalidade}\nEmojis: {uso_emojis}\nTom: {tom}\nFoco: {foco}\nArquetipo: {arquetipo}\nTom de voz: {tom_voz}\nEstilo de comunicação: {estilo_comunicacao}\nNível de humor: {nivel_humor}\nEmpatia: {empatia}\nAutoridade/tom de conselho: {autoridade_conselho}\nProfundidade de expertise: {profundidade_expertise}\nPerfil de risco: {perfil_risco}\nMotivação/call-to-action: {motivacao_call}\nRegionalismo: {regionalismo}\nCultura: {cultura}\nValores centrais: {valores_centrais}\nReação ao fracasso: {reacao_fracasso}")
+                        # Salvar foto se houver
+                        foto_path = None
+                        if foto_perfil is not None:
+                            ext = os.path.splitext(foto_perfil.name)[-1]
+                            nome_arquivo = f"perfil_ia_{user_id}_{uuid.uuid4().hex}{ext}"
+                            pasta = "profile_pics"
+                            os.makedirs(pasta, exist_ok=True)
+                            caminho = os.path.join(pasta, nome_arquivo)
+                            with open(caminho, "wb") as f:
+                                f.write(foto_perfil.getbuffer())
+                            foto_path = caminho
+                        # Montar dict de dados
+                        dados = {
+                            'foto_path': foto_path,
+                            'idioma': idioma,
+                            'amigavel': amigavel,
+                            'regionalismo': regionalismo,
+                            'cultura': cultura,
+                            'formalidade': formalidade,
+                            'uso_emojis': uso_emojis,
+                            'tom': tom,
+                            'foco': foco,
+                            'arquetipo': arquetipo,
+                            'tom_voz': tom_voz,
+                            'estilo_comunicacao': estilo_comunicacao,
+                            'nivel_humor': nivel_humor,
+                            'empatia': empatia,
+                            'autoridade_conselho': autoridade_conselho,
+                            'profundidade_expertise': profundidade_expertise,
+                            'perfil_risco': perfil_risco,
+                            'motivacao_call': motivacao_call,
+                            'valores_centrais': valores_centrais,
+                            'reacao_fracasso': reacao_fracasso,
+                            'prompt_base': prompt_base,
+                            'nome_customizado': nome_perfil_val if nome_perfil_val else '',
+                            'descricao_curta': descricao_curta_val,
+                            'tipo': 'customizado'
+                        }
+                        personalidade_repo.salvar_personalidade_completa(user_id, nome_perfil_val, dados)
+                        # Atualizar session_state imediatamente com o novo perfil
+                        novo_perfil = dados.copy()
+                        novo_perfil['nome_perfil'] = nome_perfil_val if nome_perfil_val else f"perfil_customizado_{uuid.uuid4().hex}"
+                        novo_perfil['tipo'] = 'customizado'
+                        novo_perfil['descricao_curta'] = descricao_curta_val
+                        if 'perfis_customizados' not in st.session_state or not st.session_state['perfis_customizados']:
+                            st.session_state['perfis_customizados'] = []
+                        st.session_state['perfis_customizados'].append(novo_perfil)
+                        st.success("Perfil IA criado com sucesso!")
+                        st.session_state['ai_personality'] = nome_perfil_val
+                        st.rerun()
     except Exception as e:
         st.error(f"Erro na interface de chat: {str(e)}")
 
@@ -822,11 +1073,43 @@ def process_user_message(user_id: int, message: str):
                     params['emojis'] = 'Nenhum'
                 nome_ia = nome_durao
             else:
-                params = {}
-                nome_ia = ''
+                # Para perfil customizado
+                perfil_custom = next((p for p in st.session_state.get('perfis_customizados', []) if p.get('nome_perfil') == personalidade), None)
+                if perfil_custom:
+                    nome_ia = perfil_custom.get('nome_customizado') or perfil_custom.get('nome_perfil') or ''
+                else:
+                    nome_ia = ''
 
             # Montar prompt customizado
-            prompt_customizado = f"Nome: {nome_ia}\nFormalidade: {params.get('formalidade', '')}\nEmojis: {params.get('emojis', '')}\nTom: {params.get('tom', '')}\nFoco: {params.get('foco', '')}"
+            if personalidade in ['clara', 'tecnica', 'durona']:
+                emojis_valor = params.get('emojis', 'Nenhum') if params else 'Nenhum'
+                prompt_customizado = f"Nome: {nome_ia}\nFormalidade: {params.get('formalidade', '')}\nEmojis: {emojis_valor}\nTom: {params.get('tom', '')}\nFoco: {params.get('foco', '')}"
+            else:
+                perfil_custom = next((p for p in st.session_state.get('perfis_customizados', []) if p.get('nome_perfil') == personalidade), None)
+                if perfil_custom:
+                    prompt_customizado = (
+                        f"Nome: {perfil_custom.get('nome_customizado') or perfil_custom.get('nome_perfil')}\n"
+                        f"Descrição: {perfil_custom.get('descricao_curta', '')}\n"
+                        f"Formalidade: {perfil_custom.get('formalidade', '')}\n"
+                        f"Emojis: {perfil_custom.get('uso_emojis', '')}\n"
+                        f"Tom: {perfil_custom.get('tom', '')}\n"
+                        f"Foco: {perfil_custom.get('foco', '')}\n"
+                        f"Arquetipo: {perfil_custom.get('arquetipo', '')}\n"
+                        f"Tom de voz: {perfil_custom.get('tom_voz', '')}\n"
+                        f"Estilo de comunicação: {perfil_custom.get('estilo_comunicacao', '')}\n"
+                        f"Nível de humor: {perfil_custom.get('nivel_humor', '')}\n"
+                        f"Empatia: {perfil_custom.get('empatia', '')}\n"
+                        f"Autoridade/tom de conselho: {perfil_custom.get('autoridade_conselho', '')}\n"
+                        f"Profundidade de expertise: {perfil_custom.get('profundidade_expertise', '')}\n"
+                        f"Perfil de risco: {perfil_custom.get('perfil_risco', '')}\n"
+                        f"Motivação/call-to-action: {perfil_custom.get('motivacao_call', '')}\n"
+                        f"Regionalismo: {perfil_custom.get('regionalismo', '')}\n"
+                        f"Cultura: {perfil_custom.get('cultura', '')}\n"
+                        f"Valores centrais: {perfil_custom.get('valores_centrais', '')}\n"
+                        f"Reação ao fracasso: {perfil_custom.get('reacao_fracasso', '')}\n"
+                    )
+                else:
+                    prompt_customizado = ''
 
             # Montar context com nome_ia
             context = {'nome_ia': nome_ia}
@@ -1042,65 +1325,113 @@ def formatar_dica_inteligente(sugestao) -> tuple:
 def render_personality_selector():
     """Renderiza o seletor de personalidade da IA"""
     try:
-        # Definir opções de personalidade
+        user_id = obter_user_id_do_usuario() if 'obter_user_id_do_usuario' in globals() else None
+        personalidade_repo = PersonalidadeIARepository(DatabaseManager())
+        # Perfis padrão
         personalidade_opcoes = {
             "clara": "🌟 Mais clara, acolhedora e engraçada",
             "tecnica": "📊 Mais técnica e formal", 
             "durona": "💪 Mais durona e informal"
         }
-        
+        # Perfis customizados
+        perfis_customizados = []
+        if 'perfis_customizados' in st.session_state and st.session_state['perfis_customizados']:
+            perfis_customizados = [p for p in st.session_state['perfis_customizados'] if p.get('tipo') == 'customizado']
+        elif user_id:
+            perfis_customizados = [p for p in personalidade_repo.listar_personalidades_usuario(user_id) if p.get('tipo') == 'customizado']
+        # Montar opções do seletor
+        opcoes = list(personalidade_opcoes.keys())
+        nomes_exibicao = {k: personalidade_opcoes[k] for k in personalidade_opcoes}
+        for perfil in perfis_customizados:
+            nome = perfil.get('nome_customizado') or perfil.get('nome_perfil')
+            opcoes.append(perfil['nome_perfil'])
+            nomes_exibicao[perfil['nome_perfil']] = f"🧑‍💼 {nome} (Customizado)"
         st.markdown("### 🎭 Personalidade Assistente")
-        
-        # Obter personalidade atual
         personalidade_anterior = st.session_state.get('ai_personality', 'clara')
-        
-        personalidade_selecionada = st.selectbox(
-            "Como você gostaria que a IA se comunique?",
-            options=list(personalidade_opcoes.keys()),
-            format_func=lambda x: personalidade_opcoes[x],
-            index=list(personalidade_opcoes.keys()).index(personalidade_anterior),
-            key="personality_selector",
-            help="Escolha o estilo de comunicação que você prefere para suas análises e respostas"
-        )
-        
-        # Verificar se houve mudança na personalidade
-        if personalidade_selecionada != personalidade_anterior:
-            st.session_state['ai_personality'] = personalidade_selecionada
-            user_id = obter_user_id_do_usuario() if 'obter_user_id_do_usuario' in globals() else None
-            st.rerun()
-        
-        # Mostrar descrição da personalidade selecionada
-        personality_descriptions = {
-            "clara": "💬 Comunicação amigável e descontraída com uso de emojis",
-            "tecnica": "📊 Linguagem técnica e precisa com terminologia financeira",
-            "durona": "🎯 Comunicação direta e sem rodeios, mais informal"
-        }
-        
-        st.markdown(f"""
-        <div style=\"background: #00008B; padding: 10px; border-radius: 8px; margin: 10px 0;\">
-            <small>{personality_descriptions[personalidade_selecionada]}</small>
-        </div>
-        """, unsafe_allow_html=True)
+        if personalidade_anterior not in opcoes:
+            personalidade_anterior = 'clara'
 
-        # Exemplos de resposta para cada personalidade (balão de fala)
-        exemplos = {
-            "clara": "Oi! 😊 Seu saldo está positivo este mês, parabéns! Se precisar de dicas para economizar ainda mais, é só perguntar! 💡",
-            "tecnica": "De acordo com os dados fornecidos, seu saldo mensal é positivo. Recomenda-se manter a disciplina financeira para potencializar seus investimentos.",
-            "durona": "Olha, seu saldo tá no azul. Mas não vacila: continue controlando os gastos se quiser ver resultado de verdade! 💪"
-        }
-        st.markdown("<div style='margin-top: 10px; margin-bottom: 10px;'><b>Exemplo de resposta:</b></div>", unsafe_allow_html=True)
-        for key, exemplo in exemplos.items():
-            icone = personalidade_opcoes[key].split()[0]
-            st.markdown(f"""
-            <div style='display: flex; align-items: flex-start; margin-bottom: 8px;'>
-                <div style='font-size: 22px; margin-right: 8px;'>{icone}</div>
-                <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; padding: 10px 16px; max-width: 320px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); font-size: 15px; color: white;'>
-                    <span style='font-weight: 500;'>{key.capitalize()}:</span> {exemplo}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        
+        # --- Grid de miniaturas ---
+        st.markdown('<div style="margin-bottom: 10px;"><b>Como você gostaria que a IA se comunique?</b></div>', unsafe_allow_html=True)
+        perfis_todos = [
+            {
+                'chave': 'clara',
+                'nome': personalidade_opcoes['clara'],
+                'img': 'imgs/perfil_amigavel_fem.png',
+                'tipo': 'padrao'
+            },
+            {
+                'chave': 'tecnica',
+                'nome': personalidade_opcoes['tecnica'],
+                'img': 'imgs/perfil_tecnico_masc.png',
+                'tipo': 'padrao'
+            },
+            {
+                'chave': 'durona',
+                'nome': personalidade_opcoes['durona'],
+                'img': 'imgs/perfil_durao_mas.png',
+                'tipo': 'padrao'
+            }
+        ]
+        for perfil in perfis_customizados:
+            perfis_todos.append({
+                'chave': perfil.get('nome_perfil'),
+                'nome': perfil.get('nome_customizado') or perfil.get('nome_perfil'),
+                'nome_customizado': perfil.get('nome_customizado'),
+                'nome_perfil': perfil.get('nome_perfil'),
+                'img': perfil.get('foto_path') if perfil.get('foto_path') and os.path.exists(perfil.get('foto_path', '')) else 'imgs/perfil_tecnico_masc.png',
+                'tipo': 'customizado',
+                'descricao_curta': perfil.get('descricao_curta', '')
+            })
+        # Exibir grid com no máximo 3 perfis por linha
+        def chunked(lst, n):
+            for i in range(0, len(lst), n):
+                yield lst[i:i + n]
+
+        idx_global = 0
+        for linha in chunked(perfis_todos, 3):
+            cols = st.columns(3)
+            for idx, perfil in enumerate(linha):
+                # Ignorar perfis sem chave/nome
+                if not perfil.get('chave') or not perfil.get('nome'):
+                    idx_global += 1
+                    continue
+                highlight = '4px solid #FFD700' if personalidade_anterior == perfil['chave'] else '2px solid #222'
+                with cols[idx]:
+                    # Definir nome curto dentro do bloco da coluna
+                    if perfil['tipo'] == 'padrao':
+                        if perfil['chave'] == 'clara':
+                            nome_curto = NOMES_PADRAO['clara']
+                            descricao_curta = '🌟 Mais clara, acolhedora e engraçada'
+                        elif perfil['chave'] == 'tecnica':
+                            nome_curto = NOMES_PADRAO['tecnica']
+                            descricao_curta = '📊 Mais técnica e formal'
+                        elif perfil['chave'] == 'durona':
+                            nome_curto = NOMES_PADRAO['durona']
+                            descricao_curta = '💪 Mais durona e informal'
+                        else:
+                            nome_curto = perfil['chave']
+                            descricao_curta = ''
+                    else:
+                        nome_curto = perfil.get('nome_customizado')
+                        if not nome_curto or str(nome_curto).strip() == '':
+                            nome_curto = perfil.get('nome_perfil')
+                        descricao_curta = perfil.get('descricao_curta', '')
+                    st.markdown(
+                        f"<div style='font-size:15px; text-align:center; font-weight:bold; margin-bottom:4px;'>{nome_curto}</div>",
+                        unsafe_allow_html=True
+                    )
+                    st.image(perfil['img'], use_container_width=False)
+                    st.markdown(
+                        f"<div style='font-size:13px; text-align:center; margin-bottom:8px;'>{descricao_curta}</div>",
+                        unsafe_allow_html=True
+                    )
+                    if st.button("Selecionar", key=f"btn_personalidade_{perfil['chave']}_{idx_global}"):
+                        st.session_state['ai_personality'] = perfil['chave']
+                        st.rerun()
+                idx_global += 1
         st.markdown("---")
+        # --- Fim do grid de miniaturas ---
     except Exception as e:
         st.error(f"Erro ao renderizar seletor de personalidade: {str(e)}")
 
