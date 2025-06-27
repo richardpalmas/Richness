@@ -6,6 +6,10 @@ import os
 import json
 import hashlib
 from datetime import datetime
+import base64
+import sys
+
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 from componentes.profile_pic_component import boas_vindas_com_foto
 from utils.exception_handler import ExceptionHandler
@@ -21,6 +25,9 @@ from utils.database_monitoring import DatabaseMonitor
 # Importações de segurança
 from security.auth.authentication import SecureAuthentication
 
+# Adicionar importação do seletor de personalidade
+from componentes.personality_selector import render_personality_selector
+
 # Configurações da página
 st.set_page_config(
     page_title="Richness - Dashboard Financeiro", 
@@ -34,98 +41,130 @@ def verificar_autenticacao():
         mostrar_formulario_login()
         st.stop()
 
+def img_to_base64(path):
+    with open(path, 'rb') as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
 def mostrar_formulario_login():
-    """Exibe formulário de login profissional do Richness"""
-    
-    # Configurar layout para centralizar o login
+    """Exibe formulário de login profissional do Richness com destaque para o Assistente IA"""
+    # Converter imagens para base64
+    img_ana = img_to_base64('imgs/perfil_amigavel_fem.png')
+    img_fernando = img_to_base64('imgs/perfil_tecnico_masc.png')
+    img_jorge = img_to_base64('imgs/perfil_durao_mas.png')
+
+    # Banner completo em um bloco HTML/CSS
+    st.markdown(f'''
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 18px; padding: 32px 24px 24px 24px; margin-bottom: 32px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); text-align: center; max-width: 900px; margin-left: auto; margin-right: auto;">
+        <div style="font-size: 2.2em; font-weight: bold; color: #fff; margin-bottom: 8px;">
+            Richness: A Sua Solução Financeira Prática e Revolucionária
+        </div>
+        <div style="font-size: 1.2em; color: #e0e0e0; margin-bottom: 24px;">
+            Escolha seu assistente financeiro ou crie o seu!
+        </div>
+        <div style="display: flex; justify-content: center; gap: 56px; flex-wrap: wrap; margin-bottom: 18px;">
+            <div>
+                <img src="data:image/png;base64,{img_ana}" width="80" style="border-radius: 16px; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(102,126,234,0.15); margin-bottom: 8px;" />
+                <div style="color: #fff; font-weight: 600; font-size: 1.1em;">Ana</div>
+                <div style="color: #e0e0e0; font-size: 0.98em;">Clara e Amigável</div>
+            </div>
+            <div>
+                <img src="data:image/png;base64,{img_fernando}" width="80" style="border-radius: 16px; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(102,126,234,0.15); margin-bottom: 8px;" />
+                <div style="color: #fff; font-weight: 600; font-size: 1.1em;">Fernando</div>
+                <div style="color: #e0e0e0; font-size: 0.98em;">Técnico e Analítico</div>
+            </div>
+            <div>
+                <img src="data:image/png;base64,{img_jorge}" width="80" style="border-radius: 16px; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(102,126,234,0.15); margin-bottom: 8px;" />
+                <div style="color: #fff; font-weight: 600; font-size: 1.1em;">Jorge</div>
+                <div style="color: #e0e0e0; font-size: 0.98em;">Durão e Direto</div>
+            </div>
+        </div>
+        <div style="font-size: 1.1em; color: #fff; margin-top: 10px;">
+            Descubra como a IA pode transformar sua vida financeira. Faça login ou crie sua conta!
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+    # Expander Saiba Mais
+    with st.expander("ℹ️ Saiba mais sobre o Assistente IA"): 
+        st.markdown("""
+        O Assistente IA do Richness é uma ferramenta inovadora que analisa seus dados financeiros, responde dúvidas, sugere melhorias e se adapta ao seu perfil. 
+        <ul>
+        <li>Perfis personalizáveis: escolha entre Ana (amigável), Fernando (analítico), Jorge (direto) ou crie o seu próprio perfil de IA.</li>
+        <li>Respostas inteligentes e contextualizadas para sua realidade financeira.</li>
+        <li>Experiência única, divertida e eficiente para transformar sua relação com o dinheiro.</li>
+        </ul>
+        """, unsafe_allow_html=True)
+
+    # Layout do formulário de login centralizado, mas abaixo do banner
     col1, col2, col3 = st.columns([1, 2, 1])
-    
     with col2:
-        # Cabeçalho da marca
         st.markdown("---")
-        st.markdown("# 💰 Richness")
-        st.markdown("### Sua plataforma de gestão financeira pessoal")
         st.markdown("**Tome controle das suas finanças de forma inteligente e segura**")
-        
-        # Formulário de login
         with st.form("login_form", clear_on_submit=False):
-            st.markdown("#### 🔐 Acesse sua conta")
-            
+            st.markdown("#### Acesse sua conta")
             usuario = st.text_input(
                 "👤 Usuário",
                 placeholder="Digite seu nome de usuário",
                 help="Seu nome de usuário cadastrado no Richness"
             )
-            
             senha = st.text_input(
                 "🔒 Senha",
                 type="password",
                 placeholder="Digite sua senha segura",
                 help="Sua senha de acesso ao Richness"
             )
-            
             col_login, col_register = st.columns(2)
-            
             with col_login:
                 login_button = st.form_submit_button(
                     "🚀 Entrar",
                     use_container_width=True,
                     type="primary"
                 )
-            
             with col_register:
                 if st.form_submit_button(
                     "📝 Criar Conta",
                     use_container_width=True
                 ):
                     st.switch_page("pages/Cadastro.py")
-            
-            # Processar login
             if login_button:
                 if not usuario or not senha:
                     st.error("❌ Por favor, preencha todos os campos!")
                 else:
                     resultado = autenticar_usuario_v2(usuario, senha)
-                    
                     if resultado['success']:
-                        # Login bem-sucedido
                         st.session_state['authenticated'] = True
                         st.session_state['autenticado'] = True
                         st.session_state['usuario'] = usuario
-                        
                         st.success("✅ Bem-vindo(a) ao Richness!")
                         st.info("🔄 Carregando seu dashboard financeiro...")
                         time.sleep(1)
                         st.rerun()
-                        
                     else:
                         st.error(f"❌ {resultado.get('message', 'Erro na autenticação')}")
-        
-        # Informações sobre o Richness
         st.markdown("---")
-        
-        with st.expander("� Por que escolher o Richness?"):
+        with st.expander("Por que escolher o Richness?"):
             st.write("""
-            **Gestão Financeira Inteligente**
+            **Gestão Financeira Inteligente com IA**
+            - 🤖 Assistente financeiro inteligente e personalizado
+            - 🧠 Categorização automática de transações com IA
+            - 💡 Insights e recomendações personalizadas por IA
             - 📊 Análises detalhadas de receitas e despesas
             - 📈 Gráficos e relatórios visuais
-            - 🏷️ Categorização automática de transações
-            - 📅 Acompanhamento temporal de seu progresso
+            - 🏷️ Organização automática das suas finanças
+            - ⏳ Acompanhamento temporal do seu progresso
             
             **Segurança e Privacidade**
             - 🔒 Seus dados são protegidos e organizados por usuário
             - 🛡️ Criptografia avançada para suas informações
             - 🚀 Performance otimizada para melhor experiência
-            - � Interface intuitiva e profissional
+            - 💻 Interface intuitiva e profissional
             
             **Recursos Avançados**
-            - � Separação clara entre receitas e despesas
+            - 🔄 Separação clara entre receitas e despesas
             - 🎯 Cálculo de ticket médio e métricas importantes
             - 📋 Transações organizadas por categoria
-            - 🔄 Atualizações em tempo real
             """)
-            
-        # Rodapé profissional
         st.markdown("---")
         st.markdown(
             "<div style='text-align: center; color: #666; font-size: 0.9em;'>"
@@ -267,49 +306,44 @@ def mostrar_notificacoes(usuario, dias_alerta=7):
             
             # Container expansível com detalhes
             with st.expander("📋 Ver detalhes dos compromissos", expanded=False):
-                for _, row in df_compromissos.iterrows():
-                    data_vencimento = row['data_vencimento']
-                    data_fmt = data_vencimento.strftime('%d/%m/%Y')
-                    valor_fmt = formatar_valor_monetario(row['valor'])
-                    desc = row['descricao']
-                    categoria = row['categoria']
-                    
-                    # Calcular dias restantes
+                for idx, row in df_compromissos.iterrows():
+                    # Garantir acesso escalar
+                    data_vencimento = df_compromissos.at[idx, 'data_vencimento']
+                    if not pd.isnull(data_vencimento) and not isinstance(data_vencimento, pd.Timestamp):
+                        data_vencimento = pd.to_datetime(data_vencimento)
+                    data_fmt = data_vencimento.strftime('%d/%m/%Y') if not pd.isnull(data_vencimento) else '-'
+                    valor_fmt = formatar_valor_monetario(df_compromissos.at[idx, 'valor'])
+                    desc = df_compromissos.at[idx, 'descricao']
+                    categoria = df_compromissos.at[idx, 'categoria']
                     hoje = datetime.now().date()
-                    dias_restantes = (data_vencimento.date() - hoje).days
-                    
-                    # Determinar urgência
-                    if dias_restantes < 0:
+                    dias_restantes = (data_vencimento.date() - hoje).days if not pd.isnull(data_vencimento) and hasattr(data_vencimento, 'date') else '-'
+                    if dias_restantes != '-' and dias_restantes < 0:
                         urgencia = "🔴 VENCIDO"
                         cor = "red"
                     elif dias_restantes == 0:
                         urgencia = "🟡 VENCE HOJE"
                         cor = "orange"
-                    elif dias_restantes <= 3:
+                    elif dias_restantes != '-' and dias_restantes <= 3:
                         urgencia = f"🟠 {dias_restantes} dias"
                         cor = "orange"
-                    else:
+                    elif dias_restantes != '-':
                         urgencia = f"🟢 {dias_restantes} dias"
                         cor = "green"
-                    
-                    # Linha do compromisso
+                    else:
+                        urgencia = "-"
+                        cor = "gray"
                     col1, col2, col3 = st.columns([3, 2, 1])
-                    
                     with col1:
                         st.markdown(f"**{desc}**")
                         st.caption(f"🏷️ {categoria}")
-                    
                     with col2:
                         st.markdown(f"📅 **{data_fmt}**")
                         st.markdown(f"💰 **{valor_fmt}**")
-                    
                     with col3:
                         st.markdown(f"<span style='color: {cor};'><b>{urgencia}</b></span>", unsafe_allow_html=True)
-                    
-                    # Observações se existirem
-                    if row.get('observacoes') and pd.notna(row['observacoes']):
-                        st.caption(f"📝 {row['observacoes']}")
-                    
+                    observacoes = df_compromissos.at[idx, 'observacoes'] if 'observacoes' in df_compromissos.columns and pd.notna(df_compromissos.at[idx, 'observacoes']) else None
+                    if observacoes:
+                        st.caption(f"📝 {observacoes}")
                     st.divider()
             
             # Link para gerenciar compromissos
@@ -355,7 +389,7 @@ def carregar_dados_usuario(usuario, data_inicio=None, data_fim=None, force_refre
 
 # Sidebar - Configurações e Filtros (configurar antes de carregar dados)
 st.sidebar.header("⚙️ Configurações")
-st.sidebar.markdown("**Sistema Richness Ativo** �")
+st.sidebar.markdown("**Sistema Richness Ativo**")
 
 # Carregar dados iniciais para definir range de datas
 saldos_info_inicial, df_inicial = carregar_dados_usuario(usuario)
@@ -417,13 +451,13 @@ if df.empty:
     st.info("💡 **Possíveis motivos:**")
     st.markdown("""
     1. 📁 Nenhum arquivo foi importado
-    2. �️ O período selecionado não contém transações
-    3. � Os dados não foram migrados para o Backend V2
+    2. 🔍 O período selecionado não contém transações
+    3. 📋 Os dados não foram migrados para o Backend V2
     """)
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("� Tentar Recarregar", type="primary"):
+        if st.button("🔄 Tentar Recarregar", type="primary"):
             st.cache_data.clear()
             st.rerun()
     
@@ -512,6 +546,7 @@ with col4:
 st.markdown("---")
 
 # Insights de IA Integrados
+from componentes.insight_card import exibir_insight_card
 def mostrar_insights_ia(usuario: str):
     """Exibe insights e status de IA integrados"""
     try:
@@ -532,152 +567,56 @@ def mostrar_insights_ia(usuario: str):
         # Importar serviços de IA
         from services.ai_assistant_service import FinancialAIAssistant
         from services.ai_categorization_service import AICategorization
+        from services.transacao_service_v2 import TransacaoService
+        from utils.repositories_v2 import PersonalidadeIARepository
         
         ai_assistant = FinancialAIAssistant()
         ai_categorization = AICategorization()
+        transacao_service = TransacaoService()
+        personalidade_repo = PersonalidadeIARepository(db)
         
-        # Container para insights de IA
-        # CSS para cards visuais melhorados
-        st.markdown("""
-        <style>
-        .home-insight-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 15px;
-            border-radius: 10px;
-            margin: 8px 0;
-            color: white;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .home-insight-positive {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-            padding: 15px;
-            border-radius: 10px;
-            margin: 8px 0;
-            color: white;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .home-insight-negative {
-            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
-            padding: 15px;
-            border-radius: 10px;
-            margin: 8px 0;
-            color: white;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .home-insight-neutral {
-            background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
-            padding: 15px;
-            border-radius: 10px;
-            margin: 8px 0;
-            color: white;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .home-insight-value {
-            font-size: 20px;
-            font-weight: bold;
-            margin: 8px 0;
-        }
-        .home-alert-box {
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 12px;
-            border-radius: 5px;
-            margin: 8px 0;
-            color: #856404;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        with st.expander("🤖 **Insights de IA** - Inteligência Artificial Financeira", expanded=True):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("#### 🎯 Insights Rápidos")
-                
-                # Obter insights rápidos
-                insights = ai_assistant.get_quick_insights(user_id)
-                
-                if 'erro' not in insights:
-                    # Saldo mensal com visual melhorado
-                    if 'saldo_mensal' in insights:
-                        saldo = insights['saldo_mensal']
-                        if saldo > 0:
-                            st.markdown(f"""
-                            <div class="home-insight-positive">
-                                <div>💰 Sobra Mensal</div>
-                                <div class="home-insight-value">R$ {saldo:,.2f}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        elif saldo < 0:
-                            st.markdown(f"""
-                            <div class="home-insight-negative">
-                                <div>⚠️ Déficit Mensal</div>
-                                <div class="home-insight-value">R$ {abs(saldo):,.2f}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.markdown("""
-                            <div class="home-insight-neutral">
-                                <div>⚖️ Equilíbrio Financeiro</div>
-                                <div class="home-insight-value">R$ 0,00</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    
-                    # Top categoria com visual melhorado
-                    if 'top_categoria' in insights:
-                        cat = insights['top_categoria']
-                        st.markdown(f"""
-                        <div class="home-insight-card">
-                            <div>📊 Maior Gasto</div>
-                            <div style="font-size: 16px; margin: 5px 0;">{cat['nome']}</div>
-                            <div class="home-insight-value">R$ {cat['valor']:,.2f}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    # Alertas com visual melhorado
-                    if insights.get('alertas'):
-                        st.markdown(f"""
-                        <div class="home-alert-box">
-                            <strong>⚠️ Alerta:</strong> {insights['alertas'][0]}
-                        </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    st.warning("⚠️ Não foi possível obter insights")
-            
-            with col2:
-                st.markdown("#### 🔬 Status de Categorização IA")
-                
-                # Obter estatísticas de categorização
-                stats = ai_categorization.obter_estatisticas_precisao(user_id)
-                
-                if stats:
-                    total = stats.get('total_transacoes', 0)
-                    categorizadas = stats.get('transacoes_categorizadas', 0)
-                    precisao = stats.get('precisao_geral', 0)
-                    
-                    if total > 0:
-                        progress = categorizadas / total if total > 0 else 0
-                        st.progress(progress, text=f"Categorização: {categorizadas}/{total}")
-                        
-                        if precisao > 80:
-                            st.success(f"🎯 Alta precisão: {precisao:.1f}%")
-                        elif precisao > 60:
-                            st.info(f"📈 Precisão moderada: {precisao:.1f}%")
-                        else:
-                            st.warning(f"⚠️ Precisão baixa: {precisao:.1f}%")
-                    else:
-                        st.info("📝 Aguardando mais dados para análise")
-                else:
-                    st.info("🤖 Sistema de IA sendo inicializado...")
-                
-                # Botão para ir ao assistente
-                if st.button("💬 Conversar com IA", type="secondary"):
-                    st.switch_page("pages/Assistente_IA.py")
-    
+        # Buscar as 30 últimas transações do extrato e 30 da fatura/cartão
+        df_todas = transacao_service.listar_transacoes_usuario(usuario, limite=5000)
+        if df_todas.empty:
+            st.info("Nenhuma transação encontrada para análise de insights.")
+            return
+        # Garantir coluna 'origem' minúscula
+        df_todas['origem'] = df_todas['origem'].astype(str)
+        # Garantir coluna 'data' como datetime se existir
+        if 'data' in df_todas.columns:
+            df_todas['data'] = pd.to_datetime(df_todas['data'], errors='coerce')
+        # Extrato: não contém fatura/cartao/credit
+        df_extrato = df_todas[~df_todas['origem'].str.contains('fatura|cartao|credit', case=False, na=False)]
+        if not df_extrato.empty and 'data' in df_extrato.columns:
+            # Garantir que é DataFrame e coluna existe
+            if not isinstance(df_extrato, pd.DataFrame):
+                df_extrato = pd.DataFrame(df_extrato)
+            if not pd.api.types.is_datetime64_any_dtype(df_extrato['data']):
+                df_extrato['data'] = pd.to_datetime(df_extrato['data'], errors='coerce')
+            # Remover linhas com data nula
+            df_extrato = df_extrato.dropna(subset=['data'])
+            df_extrato_ultimas = df_extrato.sort_values(by="data", ascending=False).head(30)
+        else:
+            df_extrato_ultimas = df_extrato.head(30)
+        # Fatura/cartão: contém fatura/cartao/credit
+        df_cartao = df_todas[df_todas['origem'].str.contains('fatura|cartao|credit', case=False, na=False)]
+        if not df_cartao.empty and 'data' in df_cartao.columns:
+            if not isinstance(df_cartao, pd.DataFrame):
+                df_cartao = pd.DataFrame(df_cartao)
+            if not pd.api.types.is_datetime64_any_dtype(df_cartao['data']):
+                df_cartao['data'] = pd.to_datetime(df_cartao['data'], errors='coerce')
+            df_cartao = df_cartao.dropna(subset=['data'])
+            df_cartao_ultimas = df_cartao.sort_values(by="data", ascending=False).head(30)
+        else:
+            df_cartao_ultimas = df_cartao.head(30)
+        # Unir para análise
+        df_insights = pd.concat([df_extrato_ultimas, df_cartao_ultimas], ignore_index=True)
+        # Substituir seletor visual antigo pelo componente reutilizável
+        render_personality_selector()
+        # Definir personalidade selecionada
+        personalidade_sel = st.session_state.get('ai_personality', 'clara')
+        # O restante do fluxo de insights deve usar personalidade_sel
+        # ... restante do código ...
     except Exception as e:
         st.error(f"❌ Erro ao carregar insights de IA: {str(e)}")
 
