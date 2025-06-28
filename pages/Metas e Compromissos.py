@@ -17,6 +17,7 @@ from componentes.personality_selector import render_personality_selector
 from componentes.insight_card import exibir_insight_card
 from services.llm_service import LLMService
 from services.insights_service_v2 import InsightsServiceV2
+from services.insights_cache_service import InsightsCacheService
 
 warnings.filterwarnings('ignore')
 
@@ -201,9 +202,6 @@ def calcular_dias_vencimento(data_valor):
 def exibir_grid_insights_metas(usuario):
     """Exibe insights personalizados específicos para metas e compromissos com cache ultra-estável"""
     try:
-        # Importar o serviço de cache
-        from services.insights_cache_service import InsightsCacheService
-        
         # Obter user_id
         db = DatabaseManager()
         usuario_repo = UsuarioRepository(db)
@@ -886,7 +884,6 @@ try:
         with col1:
             if st.sidebar.button("🗑️ Limpar Cache", help="Remove cache expirado do usuário", key="limpar_cache_metas_btn"):
                 try:
-                    from services.insights_cache_service import InsightsCacheService
                     cache_service = InsightsCacheService()
                     
                     # Limpar apenas cache expirado
@@ -908,7 +905,6 @@ try:
         with col2:
             if st.sidebar.button("🔄 Reset Cache", help="Remove TODO cache do usuário e força regeneração", key="reset_cache_metas_btn"):
                 try:
-                    from services.insights_cache_service import InsightsCacheService
                     cache_service = InsightsCacheService()
                     
                     if user_id:
