@@ -199,6 +199,29 @@ class DatabaseManager:
                 )
             """)
             
+            # Tabela de metas de economia
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metas_economia (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    nome TEXT NOT NULL,
+                    valor_total DECIMAL(15,2) NOT NULL CHECK (valor_total > 0),
+                    prazo_meses INTEGER NOT NULL CHECK (prazo_meses > 0),
+                    valor_mensal DECIMAL(15,2) NOT NULL CHECK (valor_mensal > 0),
+                    valor_economizado DECIMAL(15,2) DEFAULT 0 CHECK (valor_economizado >= 0),
+                    data_criacao DATE NOT NULL,
+                    data_conclusao_prevista DATE NOT NULL,
+                    observacoes TEXT,
+                    status TEXT DEFAULT 'ativa' CHECK (status IN ('ativa', 'concluida', 'cancelada')),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+                    CONSTRAINT nome_length CHECK (length(nome) >= 2 AND length(nome) <= 200),
+                    CONSTRAINT valor_economizado_max CHECK (valor_economizado <= valor_total),
+                    CONSTRAINT data_conclusao_valida CHECK (data_conclusao_prevista >= data_criacao)
+                )
+            """)
+            
             # Tabela de cache de categorização IA
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS cache_categorizacao_ia (
@@ -215,6 +238,28 @@ class DatabaseManager:
                     FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE,
                     UNIQUE(user_id, descricao_hash),
                     CONSTRAINT confianca_range CHECK (confianca >= 0.0 AND confianca <= 1.0)
+                )
+            """)
+            
+            # Tabela de cache de insights LLM
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cache_insights_llm (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    insight_type TEXT NOT NULL, -- 'saldo_mensal', 'maior_gasto', 'economia_potencial', 'alerta_gastos'
+                    personalidade TEXT NOT NULL, -- 'clara', 'tecnica', 'durona', ou nome do perfil customizado
+                    data_hash TEXT NOT NULL, -- Hash dos dados usados para gerar o insight
+                    prompt_hash TEXT NOT NULL, -- Hash do prompt usado
+                    insight_titulo TEXT NOT NULL,
+                    insight_valor TEXT,
+                    insight_comentario TEXT NOT NULL,
+                    modelo_usado TEXT DEFAULT 'gpt-4o-mini',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL, -- Data de expiração do cache
+                    used_count INTEGER DEFAULT 0,
+                    FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, insight_type, personalidade, data_hash, prompt_hash),
+                    CONSTRAINT insight_type_valid CHECK (insight_type IN ('saldo_mensal', 'maior_gasto', 'economia_potencial', 'alerta_gastos', 'total_gastos_cartao', 'maior_gasto_cartao', 'padrao_gastos_cartao', 'controle_cartao'))
                 )
             """)
             
@@ -340,7 +385,14 @@ class DatabaseManager:
             # Índices para cache IA
             "CREATE INDEX IF NOT EXISTS idx_cache_ia_hash ON cache_categorizacao_ia(user_id, descricao_hash)",
             "CREATE INDEX IF NOT EXISTS idx_cache_ia_aprovada ON cache_categorizacao_ia(user_id, aprovada, used_count)",
-              # Índices para categorias
+            
+            # Índices para cache de insights LLM
+            "CREATE INDEX IF NOT EXISTS idx_cache_insights_user_type ON cache_insights_llm(user_id, insight_type, personalidade)",
+            "CREATE INDEX IF NOT EXISTS idx_cache_insights_hash ON cache_insights_llm(user_id, data_hash, prompt_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_cache_insights_expires ON cache_insights_llm(expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_cache_insights_used ON cache_insights_llm(user_id, used_count DESC)",
+            
+            # Índices para categorias
             "CREATE INDEX IF NOT EXISTS idx_categorias_user_active ON categorias_personalizadas(user_id, is_active)",
             
             # Índices para conversas IA
@@ -359,6 +411,11 @@ class DatabaseManager:
             # Índices para compromissos
             "CREATE INDEX IF NOT EXISTS idx_compromissos_user_data ON compromissos(user_id, data_vencimento DESC)",
             "CREATE INDEX IF NOT EXISTS idx_compromissos_status ON compromissos(user_id, status, data_vencimento)",
+            
+            # Índices para metas de economia
+            "CREATE INDEX IF NOT EXISTS idx_metas_economia_user_status ON metas_economia(user_id, status, data_criacao DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_metas_economia_user_data ON metas_economia(user_id, data_criacao DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_metas_economia_conclusao ON metas_economia(user_id, data_conclusao_prevista)",
         ]
         
         for indice in indices:
@@ -384,6 +441,15 @@ class DatabaseManager:
             AFTER UPDATE ON descricoes_personalizadas
             BEGIN
                 UPDATE descricoes_personalizadas SET updated_at = CURRENT_TIMESTAMP 
+                WHERE id = NEW.id;
+            END
+        """)
+        
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS update_metas_economia_timestamp 
+            AFTER UPDATE ON metas_economia
+            BEGIN
+                UPDATE metas_economia SET updated_at = CURRENT_TIMESTAMP 
                 WHERE id = NEW.id;
             END
         """)

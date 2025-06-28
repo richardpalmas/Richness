@@ -773,6 +773,137 @@ GET /api/analytics/credit-card
 
 ---
 
+## ✅ Atualizações Recentes
+
+### 🔧 Correção de Bug: meta_repo não definido (28/06/2025)
+
+**PROBLEMA CORRIGIDO**: Erro "name 'meta_repo' is not defined" na página Metas e Compromissos.
+
+#### 🐛 Bug Identificado:
+- Variável `meta_repo` estava sendo utilizada sem ter sido instanciada na seção de exibição de metas
+- Erro ocorria na linha de carregamento das metas do banco de dados
+- Múltiplas conversões `float()` sem verificação de `None` causando problemas de tipo
+
+#### ✅ Correções Implementadas:
+1. **Instanciação Correta**: Adicionada linha `meta_repo = MetaEconomiaRepository(db_manager)` antes do uso
+2. **Verificação de Tipos**: Implementada verificação `is not None` antes de conversões `float()`
+3. **Tratamento Robusto**: Todas as conversões agora usam padrão `0.0` quando valor é `None`
+4. **Teste de Validação**: Script de teste criado e executado com sucesso
+
+#### 🔍 Linhas Corrigidas:
+- Linha 1292: Adicionada instanciação do `meta_repo`
+- Linhas 269-271: Correção de conversões `float()` com verificação `None`
+- Linhas 1289-1290: Correção em métricas gerais
+- Linhas 1306-1307: Correção no cálculo de progresso
+- Linha 1328: Correção no metric mensal
+
+### 💾 Persistência de Metas de Economia no Banco de Dados (28/06/2025)
+
+**IMPLEMENTAÇÃO COMPLETA**: Sistema de persistência de metas de economia integrado ao banco de dados com leitura correta pelo LLM.
+
+#### 🔧 Implementações Realizadas:
+
+1. **MetaEconomiaRepository Completo**
+   - Criação, leitura, atualização e exclusão de metas
+   - Métodos de busca por status e resumos estatísticos
+   - Operações de progresso (adicionar valores economizados)
+   - Funcionalidades de análise (metas próximas ao vencimento)
+
+2. **Tabela `metas_economia` no Banco**
+   - Campos: nome, valor_total, prazo_meses, valor_mensal, valor_economizado
+   - Status: ativa, concluida, cancelada
+   - Timestamps automáticos de criação e atualização
+   - Relacionamento com usuários via foreign key
+
+3. **Página Metas e Compromissos Integrada**
+   - Salvamento direto no banco via MetaEconomiaRepository
+   - Carregamento de metas do banco (não mais session_state)
+   - Atualização de progresso persistente
+   - Gerenciamento de status (ativa/concluída)
+
+4. **LLMService Atualizado**
+   - Busca de dados reais do banco para gerar insights
+   - Formatação detalhada de metas com progresso real
+   - Contexto rico incluindo valores economizados e prazos
+   - Tratamento de tipos com verificações None
+
+#### ✅ Funcionalidades Garantidas:
+- **Persistência Total**: Metas sobrevivem ao encerramento de sessões
+- **Insights Inteligentes**: LLM lê dados reais das metas cadastradas
+- **Progresso Realista**: Acompanhamento de valores realmente economizados
+- **Integridade de Dados**: Relacionamentos e constraints do banco
+- **Performance**: Cache otimizado com limpeza automática
+
+### 🤖 Correção dos Insights de Metas e Compromissos (28/06/2025)
+
+**PROBLEMA IDENTIFICADO**: Os insights de metas e compromissos não estavam lendo os dados reais cadastrados pelo usuário, gerando respostas genéricas do LLM.
+
+#### 🔧 Solução Implementada:
+
+1. **Formatação Específica no LLMService**
+   - Adicionada formatação específica para contextos de metas e compromissos no `_format_context_for_prompt()`
+   - Sistema agora detecta `tipo_analise` e formata dados detalhados para insights de metas
+   - Inclusão de seções específicas: "DADOS DE METAS E COMPROMISSOS", "Compromissos Pendentes", "Metas de Economia", etc.
+
+2. **Busca Dinâmica de Dados Reais**
+   - LLMService agora busca dados reais do repositório de compromissos
+   - Busca detalhes das metas do `session_state` quando disponível
+   - Formatação legível de dados específicos (nomes, valores, prazos, progresso)
+
+3. **Prompts Melhorados**
+   - Prompts mais específicos que orientam o LLM a usar os dados detalhados
+   - Instruções explícitas para citar nomes e valores reais dos compromissos e metas
+   - Foco em análises práticas baseadas nos dados cadastrados
+
+#### 📋 Dados Agora Incluídos nos Insights:
+
+- **Compromissos**: Descrição, valor, categoria, data de vencimento de cada compromisso
+- **Metas**: Nome, valor total, economia mensal, prazo, progresso percentual
+- **Situação Financeira**: Saldo líquido, capacidade de pagamento, equilibrio financeiro
+- **Análise Estratégica**: Viabilidade das metas, relação compromissos vs saldo
+
+#### ✅ Resultado:
+- Insights agora são específicos e baseados nos dados reais cadastrados
+- LLM cita nomes e valores específicos dos compromissos e metas
+- Análises práticas e personalizadas para a situação real do usuário
+- Cache mantido para otimização de performance
+
+---
+
+### 📊 Sistema de Categorias Unificado - Metas e Compromissos (28/06/2025)
+
+Implementado sistema de categorias **unificado e inteligente** na página "Metas e Compromissos" que garante sincronização automática com a página "Gerenciar Transações":
+
+#### 🔧 Melhorias Implementadas:
+
+1. **Sincronização Automática**
+   - Categorias criadas em "Gerenciar Transações" aparecem automaticamente em "Metas e Compromissos"
+   - Sistema unificado entre todas as páginas da aplicação
+   - Cache inteligente com atualização automática
+
+2. **Múltiplas Fontes de Categorias**
+   - **23 categorias padrão** do sistema (incluindo "Imóvel" para compromissos)
+   - **Categorias personalizadas** criadas pelo usuário
+   - **Categorias das transações** existentes (últimos 2 anos)
+   - **Fallback robusto** para garantir disponibilidade
+
+3. **Sistema de Cache Avançado**
+   - Cache versionado com invalidação inteligente
+   - Monitoramento de mudanças em arquivos
+   - Performance otimizada (TTL 5 minutos)
+   - Debug no modo depurador
+
+#### 📊 Resultado:
+
+- **27+ categorias** sempre disponíveis
+- **100% compatibilidade** com sistema existente
+- **0 quebras** de funcionalidade
+- **Performance otimizada** com cache inteligente
+
+> **Para usuários**: Agora todas as categorias que você cria ou usa em "Gerenciar Transações" ficam automaticamente disponíveis ao criar compromissos na página "Metas e Compromissos"!
+
+---
+
 ## 📚 Conclusões e Próximos Passos
 
 O **Richness** é um sistema completo e robusto de gestão financeira pessoal, com arquitetura moderna, segurança avançada e funcionalidades de IA. A documentação fornece todos os detalhes necessários para:

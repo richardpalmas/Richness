@@ -684,7 +684,8 @@ def render_chat_interface(user_id: int):
                         <div style='background: linear-gradient(135deg, #232526 0%, #414345 100%); padding: 16px; border-radius: 12px; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08);'>
                             <b>Nome:</b> {perfil.get('nome_customizado', perfil.get('nome_perfil'))}<br>
                             <b>Idioma:</b> {perfil.get('idioma', '')} &nbsp;|&nbsp; <b>Tom:</b> {perfil.get('tom', '')} &nbsp;|&nbsp; <b>Foco:</b> {perfil.get('foco', '')}<br>
-                            <b>Formalidade:</b> {perfil.get('formalidade', '')} &nbsp;|&nbsp; <b>Emojis:</b> {perfil.get('uso_emojis', '')}
+                            <b>Formalidade:</b> {perfil.get('formalidade', '')} &nbsp;|&nbsp; <b>Emojis:</b> {perfil.get('uso_emojis', '')}<br>
+                            <b>Regionalismo:</b> {perfil.get('regionalismo', 'Não definido')} &nbsp;|&nbsp; <b>Cultura:</b> {perfil.get('cultura', 'Não definido')}
                         </div>
                         """, unsafe_allow_html=True)
                     with col_acoes:
@@ -1011,6 +1012,28 @@ def render_chat_interface(user_id: int):
                             st.session_state['perfis_customizados'] = []
                         st.session_state['perfis_customizados'].append(novo_perfil)
                         st.success("Perfil IA criado com sucesso!")
+                        
+                        # Exibir resumo do perfil criado
+                        st.markdown("### 📋 Resumo do Perfil Criado")
+                        st.markdown(f"""
+                        **Nome:** {nome_perfil_val}  
+                        **Descrição:** {descricao_curta_val}  
+                        **Idioma:** {idioma}  
+                        **Formalidade:** {formalidade}  
+                        **Uso de Emojis:** {uso_emojis}  
+                        **Tom:** {tom}  
+                        **Foco:** {foco}  
+                        **Regionalismo:** {regionalismo if regionalismo else 'Não definido'}  
+                        **Cultura:** {cultura if cultura else 'Não definido'}  
+                        **Arquétipo:** {arquetipo if arquetipo else 'Não definido'}  
+                        **Tom de voz:** {tom_voz if tom_voz else 'Não definido'}  
+                        **Estilo de comunicação:** {estilo_comunicacao if estilo_comunicacao else 'Não definido'}  
+                        **Nível de humor:** {nivel_humor if nivel_humor else 'Não definido'}  
+                        **Empatia:** {empatia if empatia else 'Não definido'}  
+                        **Perfil de risco:** {perfil_risco if perfil_risco else 'Não definido'}  
+                        **Valores centrais:** {valores_centrais if valores_centrais else 'Não definido'}  
+                        """)
+                        
                         st.session_state['ai_personality'] = nome_perfil_val
                         st.rerun()
     except Exception as e:

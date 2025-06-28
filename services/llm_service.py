@@ -67,13 +67,15 @@ Se não houver dados suficientes, informe de maneira clara e objetiva.
 Use formatação Markdown para estruturar suas respostas.
 ''',
                 "durona": '''\
-Você é um assistente financeiro direto, objetivo e sem rodeios, com um toque de informalidade.
-Responda de forma curta, clara, prática e até um pouco "durona", como um coach que não passa a mão na cabeça.
-Use frases de impacto, gírias leves e nunca use frases de apoio, frases acolhedoras ou emojis amigáveis.
+Você é um assistente financeiro direto, objetivo e sem rodeios, com perfil militar.
+Responda de forma curta, clara, prática, firme e bastante "dura", como um militar conversando com um recruta.
+Use jargões militares, frases de impacto, gírias leves e nunca use frases de apoio, frases acolhedoras ou emojis amigáveis.
 Não diga "estou aqui para ajudar", "espero que isso ajude" ou qualquer frase polida.
 Seja prático, vá direto ao ponto e não enrole.
-Exemplo de resposta: "Seu saldo está ok, mas se não controlar os gastos, vai ficar no vermelho. Fique esperto."
-Outro exemplo: "Gasto alto com taxas. Corta isso se quiser sobrar dinheiro."
+Exemplo de resposta: "“Gastou mais do que devia? Agora aguenta o tranco, recruta. Corta supérfluo, 
+ajusta a rota e começa a registrar cada centavo. Sem mimimi. Dinheiro não aceita desaforo.”"
+Outro exemplo: "“Tá no vermelho? Culpa sua. Falta de disciplina é o primeiro passo pro buraco. Prioriza dívida, elimina 
+gasto inútil e aprende a dizer 'não'. Missão dada é missão cumprida. Sem desculpa, sem moleza.”"
 Baseie suas respostas nos dados do contexto e incentive o usuário a agir sem rodeios.
 Se não houver dados suficientes, diga isso de forma direta.
 Use Markdown para organizar as respostas.
@@ -196,6 +198,34 @@ Use Markdown para organizar as respostas.
                 else:
                     formatted_context.append(f"- {alerta}")
         
+        # Formatação específica para dados do cartão
+        if 'total_gastos' in context:
+            formatted_context.append(f"\n## Total de Gastos no Cartão: R$ {context['total_gastos']:,.2f}")
+        
+        if 'maior_gasto' in context and context['maior_gasto']:
+            maior_gasto = context['maior_gasto']
+            if isinstance(maior_gasto, dict):
+                data = maior_gasto.get('data', 'N/A')
+                if hasattr(data, 'strftime'):
+                    data_fmt = data.strftime('%Y-%m-%d')
+                else:
+                    data_fmt = str(data)[:10] if len(str(data)) >= 10 else str(data)
+                
+                formatted_context.append(f"\n## Maior Gasto do Cartão")
+                formatted_context.append(f"Data: {data_fmt}")
+                formatted_context.append(f"Descrição: {maior_gasto.get('descricao', 'N/A')}")
+                formatted_context.append(f"Valor: R$ {maior_gasto.get('valor', 0):,.2f}")
+                formatted_context.append(f"Categoria: {maior_gasto.get('categoria', 'N/A')}")
+        
+        if 'categoria_predominante' in context and context['categoria_predominante']:
+            formatted_context.append(f"\n## Categoria Predominante: {context['categoria_predominante']}")
+        
+        if 'gasto_medio' in context:
+            formatted_context.append(f"\n## Gasto Médio do Cartão: R$ {context['gasto_medio']:,.2f}")
+        
+        if 'periodo_analise' in context:
+            formatted_context.append(f"\n## Período de Análise: {context['periodo_analise']}")
+        
         # Formatação das últimas transações
         if 'ultimas_transacoes' in context and context['ultimas_transacoes']:
             formatted_context.append("\n## Últimas Transações")
@@ -207,11 +237,148 @@ Use Markdown para organizar as respostas.
                 
                 formatted_context.append(f"- {data}: {descricao} - R$ {valor:,.2f} ({categoria})")
         
+        # Formatação das últimas transações do cartão (específico para insights do cartão)
+        if 'ultimas_transacoes_cartao' in context and context['ultimas_transacoes_cartao']:
+            formatted_context.append("\n## Últimas 30 Transações do Cartão de Crédito")
+            for transacao in context['ultimas_transacoes_cartao']:
+                # Adaptar para diferentes formatos de data
+                data = transacao.get('data', 'N/A')
+                if hasattr(data, 'strftime'):
+                    data_fmt = data.strftime('%Y-%m-%d')
+                elif isinstance(data, str):
+                    data_fmt = data[:10] if len(data) >= 10 else data
+                else:
+                    data_fmt = str(data)[:10]
+                
+                valor = transacao.get('valor', 0)
+                descricao = transacao.get('descricao', 'N/A')
+                categoria = transacao.get('categoria', 'N/A')
+                origem = transacao.get('origem', 'N/A')
+                
+                formatted_context.append(f"- {data_fmt}: {descricao} - R$ {valor:,.2f} ({categoria}) [{origem}]")
+        
         # Formatação das transações detalhadas do período
         if 'todas_transacoes_periodo' in context and context['todas_transacoes_periodo']:
             formatted_context.append("\n## Transações do período selecionado (máx. 100 exibidas)")
             for t in context['todas_transacoes_periodo'][:100]:
                 data_fmt = t['data'][:10] if isinstance(t['data'], str) else str(t['data'])[:10]
                 formatted_context.append(f"- {data_fmt}: {t['descricao']} - R$ {t['valor']:.2f} ({t['categoria']})")
+        
+        # Formatação específica para insights de METAS E COMPROMISSOS
+        if 'tipo_analise' in context:
+            tipo_analise = context['tipo_analise']
+            
+            if tipo_analise in ['compromissos_metas', 'metas_economia', 'capacidade_pagamento', 'estrategia_financeira']:
+                formatted_context.append("\n## DADOS DE METAS E COMPROMISSOS")
+                
+                # Informações básicas
+                user_id = context.get('user_id', 'N/A')
+                saldo_liquido = context.get('saldo_liquido', 0)
+                formatted_context.append(f"Saldo líquido atual: R$ {saldo_liquido:,.2f}")
+                
+                # Compromissos pendentes
+                if 'compromissos_count' in context:
+                    count = context['compromissos_count']
+                    total = context.get('compromissos_total', 0)
+                    situacao = context.get('situacao', 'indefinida')
+                    
+                    formatted_context.append(f"\n### Compromissos Pendentes:")
+                    formatted_context.append(f"- Quantidade: {count} compromissos")
+                    formatted_context.append(f"- Valor total: R$ {total:,.2f}")
+                    formatted_context.append(f"- Situação: {situacao}")
+                    
+                    if count > 0:
+                        # Buscar detalhes dos compromissos do repositório
+                        try:
+                            from utils.database_manager_v2 import DatabaseManager
+                            from utils.repositories_v2 import CompromissoRepository
+                            
+                            db = DatabaseManager()
+                            compromisso_repo = CompromissoRepository(db)
+                            df_compromissos = compromisso_repo.obter_compromissos(user_id, "pendente")
+                            
+                            if not df_compromissos.empty:
+                                formatted_context.append("- Detalhes dos compromissos:")
+                                for idx, row in df_compromissos.iterrows():
+                                    desc = row.get('descricao', 'N/A')
+                                    valor = row.get('valor', 0)
+                                    categoria = row.get('categoria', 'N/A')
+                                    data_venc = row.get('data_vencimento', 'N/A')
+                                    formatted_context.append(f"  * {desc}: R$ {valor:,.2f} ({categoria}) - Vencimento: {data_venc}")
+                        except Exception:
+                            # Falhar silenciosamente se não conseguir buscar detalhes
+                            formatted_context.append("- Detalhes específicos dos compromissos não disponíveis")
+                    else:
+                        formatted_context.append("- Nenhum compromisso pendente cadastrado")
+                
+                # Metas de economia
+                if 'metas_count' in context:
+                    count = context['metas_count']
+                    total_valor = context.get('metas_total_valor', 0)
+                    economia_mensal = context.get('economia_mensal_necessaria', 0)
+                    viabilidade = context.get('viabilidade', 'indefinida')
+                    
+                    formatted_context.append(f"\n### Metas de Economia:")
+                    formatted_context.append(f"- Quantidade: {count} metas ativas")
+                    formatted_context.append(f"- Valor total das metas: R$ {total_valor:,.2f}")
+                    formatted_context.append(f"- Economia mensal necessária: R$ {economia_mensal:,.2f}")
+                    formatted_context.append(f"- Viabilidade: {viabilidade}")
+                    
+                    if count > 0:
+                        # Buscar detalhes das metas do banco de dados
+                        try:
+                            from utils.repositories_v2 import MetaEconomiaRepository
+                            
+                            meta_repo = MetaEconomiaRepository(db)
+                            df_metas = meta_repo.obter_metas_usuario(user_id, status='ativa')
+                            
+                            if not df_metas.empty:
+                                formatted_context.append("- Detalhes das metas:")
+                                for idx, meta in df_metas.iterrows():
+                                    nome = meta.get('nome', 'Meta sem nome')
+                                    valor_total_raw = meta.get('valor_total', 0)
+                                    valor_mensal_raw = meta.get('valor_mensal', 0)
+                                    valor_economizado_raw = meta.get('valor_economizado', 0)
+                                    prazo_raw = meta.get('prazo_meses', 0)
+                                    
+                                    valor_total = float(valor_total_raw) if valor_total_raw is not None else 0.0
+                                    valor_mensal = float(valor_mensal_raw) if valor_mensal_raw is not None else 0.0
+                                    valor_economizado = float(valor_economizado_raw) if valor_economizado_raw is not None else 0.0
+                                    prazo = int(prazo_raw) if prazo_raw is not None else 0
+                                    progresso = (valor_economizado / valor_total * 100) if valor_total > 0 else 0
+                                    
+                                    formatted_context.append(f"  * {nome}: R$ {valor_total:,.2f} (economia mensal: R$ {valor_mensal:,.2f})")
+                                    formatted_context.append(f"    - Prazo: {prazo} meses | Progresso: {progresso:.1f}% (R$ {valor_economizado:,.2f} economizado)")
+                        except Exception:
+                            # Falhar silenciosamente se não conseguir buscar detalhes
+                            formatted_context.append("- Detalhes específicos das metas não disponíveis")
+                    else:
+                        formatted_context.append("- Nenhuma meta de economia cadastrada")
+                
+                # Capacidade de pagamento e saldo disponível
+                if 'saldo_disponivel' in context:
+                    saldo_disponivel = context['saldo_disponivel']
+                    capacidade = context.get('capacidade', 'indefinida')
+                    total_economia_mensal = context.get('total_economia_mensal', 0)
+                    
+                    formatted_context.append(f"\n### Capacidade Financeira:")
+                    formatted_context.append(f"- Saldo disponível: R$ {saldo_disponivel:,.2f}")
+                    formatted_context.append(f"- Capacidade: {capacidade}")
+                    formatted_context.append(f"- Compromisso de economia mensal: R$ {total_economia_mensal:,.2f}")
+                
+                # Análise estratégica
+                if 'tem_compromissos' in context:
+                    tem_compromissos = context['tem_compromissos']
+                    tem_metas = context.get('tem_metas', False)
+                    saldo_positivo = context.get('saldo_positivo', False)
+                    economia_viavel = context.get('economia_viavel', False)
+                    equilibrio = context.get('equilibrio_financeiro', 'indefinido')
+                    
+                    formatted_context.append(f"\n### Situação Estratégica:")
+                    formatted_context.append(f"- Possui compromissos: {'Sim' if tem_compromissos else 'Não'}")
+                    formatted_context.append(f"- Possui metas: {'Sim' if tem_metas else 'Não'}")
+                    formatted_context.append(f"- Saldo positivo: {'Sim' if saldo_positivo else 'Não'}")
+                    formatted_context.append(f"- Economia viável: {'Sim' if economia_viavel else 'Não'}")
+                    formatted_context.append(f"- Equilíbrio financeiro: {equilibrio}")
         
         return "\n".join(formatted_context)

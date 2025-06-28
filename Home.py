@@ -28,6 +28,11 @@ from security.auth.authentication import SecureAuthentication
 # Adicionar importação do seletor de personalidade
 from componentes.personality_selector import render_personality_selector
 
+from componentes.insight_card import exibir_insight_card
+
+from services.llm_service import LLMService
+from services.insights_service_v2 import InsightsServiceV2
+
 # Configurações da página
 st.set_page_config(
     page_title="Richness - Dashboard Financeiro", 
@@ -347,7 +352,7 @@ def mostrar_notificacoes(usuario, dias_alerta=7):
                     st.divider()
             
             # Link para gerenciar compromissos
-            st.info("💡 Para gerenciar seus compromissos, acesse a página [Minhas Economias](pages/Minhas_Economias)")
+            st.info("💡 Para gerenciar seus compromissos, acesse a página Metas e Compromissos")
             
     except Exception as e:
         # Silenciosamente falhar para não quebrar o dashboard
@@ -390,6 +395,14 @@ def carregar_dados_usuario(usuario, data_inicio=None, data_fim=None, force_refre
 # Sidebar - Configurações e Filtros (configurar antes de carregar dados)
 st.sidebar.header("⚙️ Configurações")
 st.sidebar.markdown("**Sistema Richness Ativo**")
+
+# Botão para ativar/desativar o modo depurador
+if 'modo_depurador' not in st.session_state:
+    st.session_state['modo_depurador'] = False
+if st.sidebar.button(f"{'🛑 Desativar' if st.session_state['modo_depurador'] else '🐞 Ativar'} Modo Depurador", help="Exibe logs detalhados dos insights na tela"):
+    st.session_state['modo_depurador'] = not st.session_state['modo_depurador']
+    st.rerun()
+st.sidebar.write(f"Modo Depurador: {'Ativo' if st.session_state['modo_depurador'] else 'Inativo'}")
 
 # Carregar dados iniciais para definir range de datas
 saldos_info_inicial, df_inicial = carregar_dados_usuario(usuario)
@@ -438,6 +451,84 @@ if st.sidebar.expander("👤 Informações do Usuário"):
     st.sidebar.write(f"**Usuário**: {usuario}")
     st.sidebar.write(f"**Transações**: {len(df) if not df.empty else 0}")
     st.sidebar.write(f"**Sistema**: Richness Platform")
+
+# Ferramentas de Cache (apenas para modo depurador)
+if st.session_state.get('modo_depurador'):
+    st.sidebar.markdown("### 🗄️ Ferramentas de Cache")
+    
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("🗑️ Limpar Cache", help="Remove cache expirado do usuário", key="limpar_cache_btn"):
+            try:
+                from services.insights_cache_service import InsightsCacheService
+                cache_service = InsightsCacheService()
+                
+                # Limpar apenas cache expirado
+                removidos = cache_service.limpar_cache_expirado_automatico()
+                
+                # Limpar cache do Streamlit
+                st.cache_data.clear()
+                
+                st.sidebar.success(f"✅ {removidos} entradas expiradas removidas")
+                st.sidebar.info("🔄 Cache do Streamlit limpo")
+                
+                # Rerun para atualizar
+                time.sleep(0.5)
+                st.rerun()
+                
+            except Exception as e:
+                st.sidebar.error(f"❌ Erro: {e}")
+    
+    with col2:
+        if st.button("🔄 Reset Cache", help="Remove TODO cache do usuário e força regeneração", key="reset_cache_btn"):
+            try:
+                from services.insights_cache_service import InsightsCacheService
+                cache_service = InsightsCacheService()
+                user_id = obter_user_id(st.session_state.get('usuario'))
+                if user_id:
+                    # Invalidar TODO cache do usuário (válido e expirado)
+                    removidos = cache_service.invalidar_cache_por_mudanca_dados(user_id)
+                    
+                    # Limpar cache do Streamlit
+                    st.cache_data.clear()
+                    st.cache_resource.clear()
+                    
+                    # Marcar flag para forçar regeneração
+                    st.session_state['forcar_regeneracao_insights'] = True
+                    
+                    st.sidebar.success(f"✅ Cache resetado ({removidos} entradas)")
+                    st.sidebar.warning("⚡ Próximos insights serão regenerados via LLM")
+                    
+                    # Rerun para regenerar
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.sidebar.error("❌ Usuário não encontrado")
+            except Exception as e:
+                st.sidebar.error(f"❌ Erro: {e}")
+    
+    # Botão para forçar regeneração sem limpar cache
+    if st.sidebar.button("⚡ Forçar Regeneração", help="Força nova chamada ao LLM sem limpar cache", key="forcar_regeneracao_btn"):
+        try:
+            user_id = obter_user_id(st.session_state.get('usuario'))
+            
+            if user_id:
+                # NÃO limpar cache - apenas marcar flag para ignorá-lo
+                st.session_state['forcar_regeneracao_insights'] = True
+                
+                # Limpar cache do Streamlit para forçar recarregamento da página
+                st.cache_data.clear()
+                
+                st.sidebar.success("⚡ Regeneração forçada ativada!")
+                st.sidebar.info("🔄 Próximos insights ignorarão cache e usarão LLM")
+                
+                # Rerun imediato
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.sidebar.error("❌ Usuário não encontrado")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro: {e}")
 
 # Botão de Sair
 st.sidebar.markdown("---")
@@ -545,82 +636,336 @@ with col4:
 
 st.markdown("---")
 
-# Insights de IA Integrados
-from componentes.insight_card import exibir_insight_card
-def mostrar_insights_ia(usuario: str):
-    """Exibe insights e status de IA integrados"""
+def exibir_grid_insights_personalizados(usuario):
+    """Exibe um grid de insights personalizados conforme a personalidade selecionada com cache inteligente"""
     try:
-        # Obter ID do usuário
+        # Importar o serviço de cache
+        from services.insights_cache_service import InsightsCacheService
+        
+        # Obter user_id
         db = DatabaseManager()
         usuario_repo = UsuarioRepository(db)
         user_data = usuario_repo.obter_usuario_por_username(usuario)
-        
         if not user_data:
             st.error("Usuário não encontrado")
             return
-        
         user_id = user_data.get('id')
         if not user_id:
             st.error("Erro ao identificar o usuário")
             return
         
-        # Importar serviços de IA
-        from services.ai_assistant_service import FinancialAIAssistant
-        from services.ai_categorization_service import AICategorization
+        # Inicializar serviços
+        insights_service = InsightsServiceV2()
+        cache_service = InsightsCacheService()
+        
+        # Obter personalidade selecionada
+        personalidade_sel = st.session_state.get('ai_personality', 'clara')
+        
+        # Obter nome amigável/avatar
+        avatar_map = {
+            'clara': 'imgs/perfil_amigavel_fem.png',
+            'tecnica': 'imgs/perfil_tecnico_masc.png',
+            'durona': 'imgs/perfil_durao_mas.png'
+        }
+        nome_map = {
+            'clara': 'Ana',
+            'tecnica': 'Fernando',
+            'durona': 'Jorge'
+        }
+        avatar_path = avatar_map.get(personalidade_sel, 'imgs/perfil_amigavel_fem.png')
+        nome_ia = nome_map.get(personalidade_sel, 'Ana')
+        
+        # Saldos e dados principais
+        saldo_info = insights_service.obter_valor_restante_mensal(user_id)
+        sugestoes = insights_service.sugerir_otimizacoes(user_id)
+        alertas = insights_service.detectar_alertas_financeiros(user_id)
+        
+        # Buscar últimas 15 transações de extrato e fatura separadamente
         from services.transacao_service_v2 import TransacaoService
-        from utils.repositories_v2 import PersonalidadeIARepository
-        
-        ai_assistant = FinancialAIAssistant()
-        ai_categorization = AICategorization()
         transacao_service = TransacaoService()
-        personalidade_repo = PersonalidadeIARepository(db)
-        
-        # Buscar as 30 últimas transações do extrato e 30 da fatura/cartão
         df_todas = transacao_service.listar_transacoes_usuario(usuario, limite=5000)
-        if df_todas.empty:
-            st.info("Nenhuma transação encontrada para análise de insights.")
-            return
-        # Garantir coluna 'origem' minúscula
-        df_todas['origem'] = df_todas['origem'].astype(str)
-        # Garantir coluna 'data' como datetime se existir
+        if 'origem' in df_todas.columns:
+            df_todas['origem'] = df_todas['origem'].astype(str)
         if 'data' in df_todas.columns:
             df_todas['data'] = pd.to_datetime(df_todas['data'], errors='coerce')
-        # Extrato: não contém fatura/cartao/credit
+        
+        # Extrato
         df_extrato = df_todas[~df_todas['origem'].str.contains('fatura|cartao|credit', case=False, na=False)]
-        if not df_extrato.empty and 'data' in df_extrato.columns:
-            # Garantir que é DataFrame e coluna existe
-            if not isinstance(df_extrato, pd.DataFrame):
-                df_extrato = pd.DataFrame(df_extrato)
-            if not pd.api.types.is_datetime64_any_dtype(df_extrato['data']):
-                df_extrato['data'] = pd.to_datetime(df_extrato['data'], errors='coerce')
-            # Remover linhas com data nula
-            df_extrato = df_extrato.dropna(subset=['data'])
-            df_extrato_ultimas = df_extrato.sort_values(by="data", ascending=False).head(30)
+        if not df_extrato.empty and 'data' in df_extrato.columns and pd.api.types.is_datetime64_any_dtype(df_extrato['data']):
+            mask = pd.Series(df_extrato['data']).notnull()
+            df_extrato_filtrado = df_extrato[mask]
+            if isinstance(df_extrato_filtrado, pd.DataFrame):
+                ultimas_extrato = df_extrato_filtrado.sort_values(by='data', ascending=False).head(15)
+            else:
+                ultimas_extrato = df_extrato_filtrado
         else:
-            df_extrato_ultimas = df_extrato.head(30)
-        # Fatura/cartão: contém fatura/cartao/credit
-        df_cartao = df_todas[df_todas['origem'].str.contains('fatura|cartao|credit', case=False, na=False)]
-        if not df_cartao.empty and 'data' in df_cartao.columns:
-            if not isinstance(df_cartao, pd.DataFrame):
-                df_cartao = pd.DataFrame(df_cartao)
-            if not pd.api.types.is_datetime64_any_dtype(df_cartao['data']):
-                df_cartao['data'] = pd.to_datetime(df_cartao['data'], errors='coerce')
-            df_cartao = df_cartao.dropna(subset=['data'])
-            df_cartao_ultimas = df_cartao.sort_values(by="data", ascending=False).head(30)
+            ultimas_extrato = df_extrato.head(15)
+        
+        # Fatura
+        df_fatura = df_todas[df_todas['origem'].str.contains('fatura|cartao|credit', case=False, na=False)]
+        if not df_fatura.empty and 'data' in df_fatura.columns and pd.api.types.is_datetime64_any_dtype(df_fatura['data']):
+            mask = pd.Series(df_fatura['data']).notnull()
+            df_fatura_filtrado = df_fatura[mask]
+            if isinstance(df_fatura_filtrado, pd.DataFrame):
+                ultimas_fatura = df_fatura_filtrado.sort_values(by='data', ascending=False).head(15)
+            else:
+                ultimas_fatura = df_fatura_filtrado
         else:
-            df_cartao_ultimas = df_cartao.head(30)
-        # Unir para análise
-        df_insights = pd.concat([df_extrato_ultimas, df_cartao_ultimas], ignore_index=True)
-        # Substituir seletor visual antigo pelo componente reutilizável
-        render_personality_selector()
-        # Definir personalidade selecionada
-        personalidade_sel = st.session_state.get('ai_personality', 'clara')
-        # O restante do fluxo de insights deve usar personalidade_sel
-        # ... restante do código ...
+            ultimas_fatura = df_fatura.head(15)
+        
+        # Obter parâmetros de personalidade para o cache
+        from utils.repositories_v2 import PersonalidadeIARepository
+        personalidade_repo = PersonalidadeIARepository(db)
+        
+        perfil_nome_amigavel = "Clara e Acolhedora"
+        perfil_nome_tecnico = "Técnico e Formal"
+        perfil_nome_durao = "Durão e Informal"
+        
+        if personalidade_sel == 'clara':
+            params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_amigavel)
+            params_ss = st.session_state.get('perfil_amigavel_parametros', {})
+            params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+            if params and (not params.get('emojis') or params.get('emojis') == ''):
+                params['emojis'] = 'Nenhum'
+        elif personalidade_sel == 'tecnica':
+            params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_tecnico)
+            params_ss = st.session_state.get('perfil_tecnico_parametros', {})
+            params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+            if params and (not params.get('emojis') or params.get('emojis') == ''):
+                params['emojis'] = 'Nenhum'
+        elif personalidade_sel == 'durona':
+            params_db = personalidade_repo.obter_personalidade(user_id, perfil_nome_durao)
+            params_ss = st.session_state.get('perfil_durao_parametros', {})
+            params = params_db if params_db and params_db.get('emojis') not in [None, ''] else params_ss
+            if params and (not params.get('emojis') or params.get('emojis') == ''):
+                params['emojis'] = 'Nenhum'
+        else:
+            # Para perfil customizado
+            perfil_custom = next((p for p in st.session_state.get('perfis_customizados', []) if p.get('nome_perfil') == personalidade_sel), None)
+            if perfil_custom:
+                params = {
+                    'formalidade': perfil_custom.get('formalidade', ''),
+                    'emojis': perfil_custom.get('uso_emojis', ''),
+                    'tom': perfil_custom.get('tom', ''),
+                    'foco': perfil_custom.get('foco', '')
+                }
+            else:
+                params = {}
+        
+        # Verificar se deve forçar regeneração
+        forcar_regeneracao = st.session_state.get('forcar_regeneracao_insights', False)
+        
+        # Limpar flag após usar
+        if forcar_regeneracao:
+            st.session_state['forcar_regeneracao_insights'] = False
+        
+        # Gerar insights usando cache inteligente
+        insights = []
+        
+        # Insight 1: Saldo do mês
+        contexto_saldo = {
+            'personalidade': personalidade_sel,
+            'saldo': saldo_info,
+            'ultimas_transacoes': ultimas_extrato.to_dict('records') if isinstance(ultimas_extrato, pd.DataFrame) and not ultimas_extrato.empty else [],
+            'usuario': user_data
+        }
+        prompt_saldo = "Analise o saldo do mês de forma personalizada, considerando o perfil da IA. Cite o valor de forma objetiva, em até 250 caracteres. NÃO inclua saudações como 'Olá' ou cumprimentos."
+        
+        insight_saldo = cache_service.gerar_insight_com_cache(
+            user_id=user_id,
+            insight_type='saldo_mensal',
+            personalidade=personalidade_sel,
+            data_context=contexto_saldo,
+            prompt=prompt_saldo,
+            personalidade_params=params or {},
+            forcar_regeneracao=forcar_regeneracao
+        )
+        
+        insights.append({
+            'tipo': 'neutro' if saldo_info['valor_restante'] >= 0 else 'negativo',
+            'titulo': insight_saldo['titulo'],
+            'valor': insight_saldo['valor'],
+            'comentario': insight_saldo['comentario'][:250] + ('...' if len(insight_saldo['comentario']) > 250 else ''),
+            'assinatura': nome_ia,
+            'avatar': avatar_path,
+            'saudacao': None,
+            'cache_info': f"Cache: {insight_saldo['source']}" if st.session_state.get('modo_depurador') else None
+        })
+        
+        # Insight 2: Maior gasto
+        maior_gasto = None
+        if isinstance(ultimas_extrato, pd.DataFrame) and not ultimas_extrato.empty and 'valor' in ultimas_extrato.columns:
+            idx_min = ultimas_extrato['valor'].idxmin()
+            maior_gasto_row = ultimas_extrato.loc[idx_min]
+            maior_gasto = maior_gasto_row
+        elif isinstance(ultimas_fatura, pd.DataFrame) and not ultimas_fatura.empty and 'valor' in ultimas_fatura.columns:
+            idx_min = ultimas_fatura['valor'].idxmin()
+            maior_gasto_row = ultimas_fatura.loc[idx_min]
+            maior_gasto = maior_gasto_row
+        
+        contexto_maior_gasto = {
+            'personalidade': personalidade_sel,
+            'maior_gasto': maior_gasto.to_dict() if maior_gasto is not None and hasattr(maior_gasto, 'to_dict') else {},
+            'ultimas_transacoes': ultimas_extrato.to_dict('records') if isinstance(ultimas_extrato, pd.DataFrame) and not ultimas_extrato.empty else [],
+            'usuario': user_data
+        }
+        prompt_maior_gasto = "Analise de forma personalizada qual foi o maior gasto recente, citando categoria, valor e contexto de forma objetiva, em até 250 caracteres. NÃO inclua saudações como 'Olá' ou cumprimentos."
+        
+        insight_maior_gasto = cache_service.gerar_insight_com_cache(
+            user_id=user_id,
+            insight_type='maior_gasto',
+            personalidade=personalidade_sel,
+            data_context=contexto_maior_gasto,
+            prompt=prompt_maior_gasto,
+            personalidade_params=params or {},
+            forcar_regeneracao=forcar_regeneracao
+        )
+        
+        insights.append({
+            'tipo': 'negativo',
+            'titulo': insight_maior_gasto['titulo'],
+            'valor': insight_maior_gasto['valor'],
+            'comentario': insight_maior_gasto['comentario'][:250] + ('...' if len(insight_maior_gasto['comentario']) > 250 else ''),
+            'assinatura': nome_ia,
+            'avatar': avatar_path,
+            'saudacao': None,
+            'cache_info': f"Cache: {insight_maior_gasto['source']}" if st.session_state.get('modo_depurador') else None
+        })
+        
+        # Insight 3: Economia potencial
+        economia_potencial = sugestoes[0] if sugestoes else None
+        contexto_economia = {
+            'personalidade': personalidade_sel,
+            'sugestao': economia_potencial,
+            'usuario': user_data
+        }
+        prompt_economia = "Analise e sugira de forma personalizada uma economia potencial para o usuário, citando categoria e valor de forma objetiva, em até 250 caracteres. NÃO inclua saudações como 'Olá' ou cumprimentos."
+        
+        insight_economia = cache_service.gerar_insight_com_cache(
+            user_id=user_id,
+            insight_type='economia_potencial',
+            personalidade=personalidade_sel,
+            data_context=contexto_economia,
+            prompt=prompt_economia,
+            personalidade_params=params or {},
+            forcar_regeneracao=forcar_regeneracao
+        )
+        
+        insights.append({
+            'tipo': 'positivo',
+            'titulo': insight_economia['titulo'],
+            'valor': insight_economia['valor'],
+            'comentario': insight_economia['comentario'][:250] + ('...' if len(insight_economia['comentario']) > 250 else ''),
+            'assinatura': nome_ia,
+            'avatar': avatar_path,
+            'saudacao': None,
+            'cache_info': f"Cache: {insight_economia['source']}" if st.session_state.get('modo_depurador') else None
+        })
+        
+        # Insight 4: Alerta de gastos
+        alerta = alertas[0] if alertas else None
+        contexto_alerta = {
+            'personalidade': personalidade_sel,
+            'alerta': alerta,
+            'ultimas_transacoes': ultimas_fatura.to_dict('records') if isinstance(ultimas_fatura, pd.DataFrame) and not ultimas_fatura.empty else [],
+            'usuario': user_data
+        }
+        prompt_alerta = "Analise e alerte de forma personalizada sobre gastos, citando o motivo e recomendação de forma objetiva, em até 250 caracteres. NÃO inclua saudações como 'Olá' ou cumprimentos."
+        
+        insight_alerta = cache_service.gerar_insight_com_cache(
+            user_id=user_id,
+            insight_type='alerta_gastos',
+            personalidade=personalidade_sel,
+            data_context=contexto_alerta,
+            prompt=prompt_alerta,
+            personalidade_params=params or {},
+            forcar_regeneracao=forcar_regeneracao
+        )
+        
+        insights.append({
+            'tipo': 'alerta',
+            'titulo': insight_alerta['titulo'],
+            'valor': '',
+            'comentario': insight_alerta['comentario'][:250] + ('...' if len(insight_alerta['comentario']) > 250 else ''),
+            'assinatura': nome_ia,
+            'avatar': avatar_path,
+            'saudacao': None,
+            'cache_info': f"Cache: {insight_alerta['source']}" if st.session_state.get('modo_depurador') else None
+        })
+        
+        # Modo Depurador: logs visuais e estatísticas de cache
+        if st.session_state.get('modo_depurador'):
+            st.subheader('🪲 Logs do Modo Depurador (Insights com Cache)')
+            
+            # Mostrar se regeneração foi forçada
+            if forcar_regeneracao:
+                st.error("⚡ **REGENERAÇÃO FORÇADA ATIVA** - Todos os insights foram gerados via LLM ignorando cache")
+                st.info("🔄 Cache foi ignorado propositalmente para esta sessão")
+            else:
+                st.success("💾 **CACHE ATIVO** - Insights podem vir do cache quando disponível")
+            
+            # Estatísticas de cache
+            cache_stats = cache_service.obter_estatisticas_cache_usuario(user_id)
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            cache_hits = len([i for i in insights if i.get('cache_info', '').endswith('cache')])
+            llm_calls = len([i for i in insights if i.get('cache_info', '').endswith('llm')])
+            total_insights = len(insights)
+            
+            with col1:
+                st.metric("📊 Cache Hits", cache_hits, help="Insights que vieram do cache")
+            with col2:
+                st.metric("🔄 LLM Calls", llm_calls, help="Insights gerados via LLM")
+            with col3:
+                efficiency = (cache_hits / total_insights * 100) if total_insights > 0 else 0
+                st.metric("⚡ Eficiência Sessão", f"{efficiency:.1f}%", help="% de insights que vieram do cache nesta sessão")
+            with col4:
+                st.metric("💾 Eficiência Geral", f"{cache_stats.get('eficiencia_cache', 0):.1f}%", help="Eficiência geral do cache do usuário")
+            
+            with st.expander("📈 Estatísticas Detalhadas do Cache"):
+                st.json(cache_stats)
+            
+            for idx, insight in enumerate(insights):
+                st.write(f'Insight #{idx+1} - {insight["titulo"]}:')
+                st.write(f'- Fonte: {insight.get("cache_info", "N/A")}')
+                st.write(f'- Comentário: {insight["comentario"]}')
+                st.divider()
+        
+        # Exibir em grid (2 por linha)
+        for i in range(0, len(insights), 2):
+            cols = st.columns(2)
+            for j, insight in enumerate(insights[i:i+2]):
+                with cols[j]:
+                    exibir_insight_card(
+                        avatar_path=insight['avatar'],
+                        nome_ia=nome_ia,
+                        saudacao=insight['saudacao'],
+                        tipo=insight['tipo'],
+                        titulo=insight['titulo'],
+                        valor=insight['valor'],
+                        comentario=insight['comentario'],
+                        assinatura=insight['assinatura']
+                    )
+                    
+                    # Mostrar info de cache se modo depurador ativo
+                    if st.session_state.get('modo_depurador') and insight.get('cache_info'):
+                        st.caption(f"🔍 {insight['cache_info']}")
+    
     except Exception as e:
-        st.error(f"❌ Erro ao carregar insights de IA: {str(e)}")
+        st.error(f"Erro ao exibir insights personalizados: {str(e)}")
+        # Fallback para versão sem cache em caso de erro
+        if st.session_state.get('modo_depurador'):
+            st.exception(e)
 
-mostrar_insights_ia(usuario)
+# Layout principal em colunas (dashboard à esquerda, seletor à direita)
+col_main, col_persona = st.columns([2.5, 1])
+
+with col_persona:
+    render_personality_selector()
+
+with col_main:
+    exibir_grid_insights_personalizados(usuario)
 
 st.markdown("---")
 
@@ -883,8 +1228,6 @@ with st.expander("📊 Transações por Categoria", expanded=False):
                     st.info("📭 Nenhuma transação encontrada nesta categoria.")
     else:
         st.info("📊 Nenhuma transação disponível para análise por categorias.")
-
-
 
 st.markdown("---")
 

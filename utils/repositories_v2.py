@@ -725,3 +725,292 @@ class PersonalidadeIARepository(BaseRepository):
             [user_id]
         )
         return [dict(row) for row in result]
+
+class CacheInsightsRepository(BaseRepository):
+    """Repository para operações com cache de insights LLM"""
+    
+    def salvar_insight_cache(self, user_id: int, insight_type: str, personalidade: str, 
+                           data_hash: str, prompt_hash: str, titulo: str, valor: str, 
+                           comentario: str, expires_hours: int = 6) -> int:
+        """Salva insight no cache com tempo de expiração"""
+        from datetime import datetime, timedelta
+        
+        expires_at = (datetime.now() + timedelta(hours=expires_hours)).isoformat()
+        
+        self._log_operation("salvar_insight_cache", 
+                          f"User: {user_id}, Type: {insight_type}, Personalidade: {personalidade}")
+        
+        return self.db.executar_insert("""
+            INSERT OR REPLACE INTO cache_insights_llm (
+                user_id, insight_type, personalidade, data_hash, prompt_hash,
+                insight_titulo, insight_valor, insight_comentario, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [user_id, insight_type, personalidade, data_hash, prompt_hash,
+              titulo, valor, comentario, expires_at])
+    
+    def buscar_insight_cache(self, user_id: int, insight_type: str, personalidade: str,
+                           data_hash: str, prompt_hash: str) -> Optional[Dict[str, Any]]:
+        """Busca insight no cache se ainda válido"""
+        from datetime import datetime
+        
+        result = self.db.executar_query("""
+            SELECT * FROM cache_insights_llm 
+            WHERE user_id = ? AND insight_type = ? AND personalidade = ? 
+            AND data_hash = ? AND prompt_hash = ? 
+            AND expires_at > ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, [user_id, insight_type, personalidade, data_hash, prompt_hash, 
+              datetime.now().isoformat()])
+        
+        if result:
+            # Incrementar contador de uso
+            self.db.executar_insert("""
+                UPDATE cache_insights_llm 
+                SET used_count = used_count + 1 
+                WHERE id = ?
+            """, [result[0]['id']])
+            
+            self._log_operation("buscar_insight_cache", f"Cache HIT - Type: {insight_type}")
+            return dict(result[0])
+        
+        self._log_operation("buscar_insight_cache", f"Cache MISS - Type: {insight_type}")
+        return None
+    
+    def limpar_cache_expirado(self, user_id: Optional[int] = None) -> int:
+        """Remove insights expirados do cache"""
+        from datetime import datetime
+        
+        if user_id:
+            query = """
+                DELETE FROM cache_insights_llm 
+                WHERE user_id = ? AND expires_at <= ?
+            """
+            params = [user_id, datetime.now().isoformat()]
+        else:
+            query = """
+                DELETE FROM cache_insights_llm 
+                WHERE expires_at <= ?
+            """
+            params = [datetime.now().isoformat()]
+        
+        with self.db.get_connection() as conn:
+            cursor = conn.execute(query, params)
+            rows_deleted = cursor.rowcount
+        
+        self._log_operation("limpar_cache_expirado", f"Removidos: {rows_deleted} insights")
+        return rows_deleted
+    
+    def obter_estatisticas_cache(self, user_id: int) -> Dict[str, Any]:
+        """Obtém estatísticas do cache de insights para o usuário"""
+        from datetime import datetime, timedelta
+        
+        # Cache válido
+        cache_valido = self.db.executar_query("""
+            SELECT COUNT(*) as count, insight_type
+            FROM cache_insights_llm 
+            WHERE user_id = ? AND expires_at > ?
+            GROUP BY insight_type
+        """, [user_id, datetime.now().isoformat()])
+        
+        # Cache total (incluindo expirado)
+        cache_total = self.db.executar_query("""
+            SELECT COUNT(*) as count
+            FROM cache_insights_llm 
+            WHERE user_id = ?
+        """, [user_id])
+        
+        # Mais usados
+        mais_usados = self.db.executar_query("""
+            SELECT insight_type, personalidade, used_count
+            FROM cache_insights_llm 
+            WHERE user_id = ? AND expires_at > ?
+            ORDER BY used_count DESC
+            LIMIT 5
+        """, [user_id, datetime.now().isoformat()])
+        
+        # Cache das últimas 24h
+        ontem = (datetime.now() - timedelta(hours=24)).isoformat()
+        cache_recente = self.db.executar_query("""
+            SELECT COUNT(*) as count
+            FROM cache_insights_llm 
+            WHERE user_id = ? AND created_at > ?
+        """, [user_id, ontem])
+        
+        return {
+            'cache_valido_por_tipo': {row['insight_type']: row['count'] for row in cache_valido},
+            'total_cache_entries': cache_total[0]['count'] if cache_total else 0,
+            'insights_mais_usados': [dict(row) for row in mais_usados],
+            'cache_criado_24h': cache_recente[0]['count'] if cache_recente else 0,
+            'ultima_verificacao': datetime.now().isoformat()
+        }
+    
+    def invalidar_cache_usuario(self, user_id: int, insight_type: Optional[str] = None) -> int:
+        """Invalida cache específico ou todo cache do usuário"""
+        if insight_type:
+            query = """
+                DELETE FROM cache_insights_llm 
+                WHERE user_id = ? AND insight_type = ?
+            """
+            params = [user_id, insight_type]
+            self._log_operation("invalidar_cache_usuario", 
+                              f"User: {user_id}, Type: {insight_type}")
+        else:
+            query = """
+                DELETE FROM cache_insights_llm 
+                WHERE user_id = ?
+            """
+            params = [user_id]
+            self._log_operation("invalidar_cache_usuario", f"User: {user_id}, ALL types")
+        
+        with self.db.get_connection() as conn:
+            cursor = conn.execute(query, params)
+            return cursor.rowcount
+
+class MetaEconomiaRepository(BaseRepository):
+    """Repository para operações com metas de economia"""
+    
+    def criar_meta(self, user_id: int, nome: str, valor_total: float, 
+                   prazo_meses: int, observacoes: str = "") -> int:
+        """Cria uma nova meta de economia"""
+        valor_mensal = valor_total / prazo_meses
+        data_criacao = datetime.now().strftime('%Y-%m-%d')
+        data_conclusao_prevista = (datetime.now() + timedelta(days=prazo_meses * 30)).strftime('%Y-%m-%d')
+        
+        meta_id = self.db.executar_insert("""
+            INSERT INTO metas_economia (
+                user_id, nome, valor_total, prazo_meses, valor_mensal,
+                data_criacao, data_conclusao_prevista, observacoes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            user_id, nome, valor_total, prazo_meses, valor_mensal,
+            data_criacao, data_conclusao_prevista, observacoes
+        ])
+        
+        self._log_operation("criar_meta", f"User: {user_id}, Nome: {nome}, Valor: {valor_total}")
+        return meta_id
+    
+    def obter_metas_usuario(self, user_id: int, status: Optional[str] = None) -> pd.DataFrame:
+        """Obtém todas as metas de um usuário, opcionalmente filtradas por status"""
+        if status:
+            query = """
+                SELECT id, nome, valor_total, prazo_meses, valor_mensal,
+                       valor_economizado, data_criacao, data_conclusao_prevista,
+                       observacoes, status, created_at, updated_at
+                FROM metas_economia
+                WHERE user_id = ? AND status = ?
+                ORDER BY data_criacao DESC
+            """
+            params = [user_id, status]
+        else:
+            query = """
+                SELECT id, nome, valor_total, prazo_meses, valor_mensal,
+                       valor_economizado, data_criacao, data_conclusao_prevista,
+                       observacoes, status, created_at, updated_at
+                FROM metas_economia
+                WHERE user_id = ?
+                ORDER BY data_criacao DESC
+            """
+            params = [user_id]
+        
+        return self.db.executar_query_df(query, params)
+    
+    def obter_meta_por_id(self, user_id: int, meta_id: int) -> Optional[Dict[str, Any]]:
+        """Obtém uma meta específica pelo ID"""
+        results = self.db.executar_query("""
+            SELECT id, nome, valor_total, prazo_meses, valor_mensal,
+                   valor_economizado, data_criacao, data_conclusao_prevista,
+                   observacoes, status, created_at, updated_at
+            FROM metas_economia
+            WHERE user_id = ? AND id = ?
+        """, [user_id, meta_id])
+        
+        return dict(results[0]) if results else None
+    
+    def atualizar_valor_economizado(self, user_id: int, meta_id: int, valor_adicional: float) -> bool:
+        """Adiciona um valor à meta de economia"""
+        affected = self.db.executar_update("""
+            UPDATE metas_economia 
+            SET valor_economizado = valor_economizado + ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND id = ?
+        """, [valor_adicional, user_id, meta_id])
+        
+        if affected > 0:
+            self._log_operation("atualizar_valor_economizado", f"User: {user_id}, Meta: {meta_id}, Valor: {valor_adicional}")
+        
+        return affected > 0
+    
+    def atualizar_status_meta(self, user_id: int, meta_id: int, novo_status: str) -> bool:
+        """Atualiza o status de uma meta"""
+        affected = self.db.executar_update("""
+            UPDATE metas_economia 
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND id = ?
+        """, [novo_status, user_id, meta_id])
+        
+        if affected > 0:
+            self._log_operation("atualizar_status_meta", f"User: {user_id}, Meta: {meta_id}, Status: {novo_status}")
+        
+        return affected > 0
+    
+    def excluir_meta(self, user_id: int, meta_id: int) -> bool:
+        """Exclui uma meta de economia"""
+        affected = self.db.executar_update("""
+            DELETE FROM metas_economia 
+            WHERE user_id = ? AND id = ?
+        """, [user_id, meta_id])
+        
+        if affected > 0:
+            self._log_operation("excluir_meta", f"User: {user_id}, Meta: {meta_id}")
+        
+        return affected > 0
+    
+    def obter_resumo_metas(self, user_id: int) -> Dict[str, Any]:
+        """Obtém resumo estatístico das metas do usuário"""
+        results = self.db.executar_query("""
+            SELECT 
+                COUNT(*) as total_metas,
+                COUNT(CASE WHEN status = 'ativa' THEN 1 END) as metas_ativas,
+                COUNT(CASE WHEN status = 'concluida' THEN 1 END) as metas_concluidas,
+                COALESCE(SUM(CASE WHEN status = 'ativa' THEN valor_total ELSE 0 END), 0) as valor_total_ativo,
+                COALESCE(SUM(CASE WHEN status = 'ativa' THEN valor_mensal ELSE 0 END), 0) as economia_mensal_necessaria,
+                COALESCE(SUM(CASE WHEN status = 'ativa' THEN valor_economizado ELSE 0 END), 0) as valor_ja_economizado
+            FROM metas_economia
+            WHERE user_id = ?
+        """, [user_id])
+        
+        if results:
+            resumo = dict(results[0])
+            # Calcular progresso médio
+            if resumo['valor_total_ativo'] > 0:
+                resumo['progresso_medio'] = (resumo['valor_ja_economizado'] / resumo['valor_total_ativo']) * 100
+            else:
+                resumo['progresso_medio'] = 0
+            
+            return resumo
+        
+        return {
+            'total_metas': 0,
+            'metas_ativas': 0, 
+            'metas_concluidas': 0,
+            'valor_total_ativo': 0,
+            'economia_mensal_necessaria': 0,
+            'valor_ja_economizado': 0,
+            'progresso_medio': 0
+        }
+    
+    def obter_metas_proximas_vencimento(self, user_id: int, dias: int = 30) -> pd.DataFrame:
+        """Obtém metas que estão próximas do vencimento"""
+        data_limite = (datetime.now() + timedelta(days=dias)).strftime('%Y-%m-%d')
+        
+        return self.db.executar_query_df("""
+            SELECT id, nome, valor_total, valor_economizado,
+                   data_conclusao_prevista, 
+                   (julianday(data_conclusao_prevista) - julianday('now')) as dias_restantes,
+                   ((valor_economizado / valor_total) * 100) as progresso_percentual
+            FROM metas_economia
+            WHERE user_id = ? AND status = 'ativa' 
+            AND data_conclusao_prevista <= ?
+            ORDER BY data_conclusao_prevista ASC
+        """, [user_id, data_limite])
